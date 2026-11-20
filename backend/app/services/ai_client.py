@@ -16,7 +16,16 @@ from dotenv import dotenv_values
 from app.core.config import BACKEND_DIR, PROJECT_ROOT, settings
 
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-MAX_AI_RETRIES = 3
+FALLBACK_TRIGGER_CODES = {404, 429, 500, 502, 503, 504}
+MAX_AI_RETRIES = 2
+
+GEMINI_CHAT_FALLBACK_MODELS = [
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-3.8-flash-lite",
+    "gemini-2.5-flash",
+]
 
 
 class AIClientError(RuntimeError):
@@ -150,59 +159,90 @@ async def create_embeddings(texts: List[str], batch_size: int = 32) -> List[List
     return all_embeddings
 
 
+def _build_chat_model_chain(primary_model: str, base_url: str) -> List[str]:
+    """Build ordered list of models to try (auto-fallback for Google Gemini on 503/429/404)."""
+    chain = [primary_model]
+    if "generativelanguage.googleapis.com" in base_url.lower():
+        for fallback in GEMINI_CHAT_FALLBACK_MODELS:
+            if fallback not in chain:
+                chain.append(fallback)
+    return chain
+
+
 async def stream_chat_completion(
     messages: List[Dict[str, str]],
     temperature: float = 0.1,
 ) -> AsyncGenerator[str, None]:
-    """Stream text deltas from an OpenAI-compatible /chat/completions endpoint."""
+    """Stream text deltas from an OpenAI-compatible /chat/completions endpoint
+    with automatic retry AND automatic fallback across Gemini models on 503/429/404.
+    """
     cfg = get_live_ai_config()
+    base_url = str(cfg["api_base_url"])
     headers = _auth_headers(str(cfg["api_key"]))
-    url = _build_url(str(cfg["api_base_url"]), "chat/completions")
-    payload = {
-        "model": str(cfg["chat_model"]),
-        "messages": messages,
-        "temperature": temperature,
-        "stream": True,
-    }
+    url = _build_url(base_url, "chat/completions")
+    model_chain = _build_chat_model_chain(str(cfg["chat_model"]), base_url)
+    last_error_msg = "ไม่สามารถเชื่อมต่อ Cloud LLM API ได้"
 
     async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
-        for attempt in range(1, MAX_AI_RETRIES + 1):
-            yielded_any = False
-            try:
-                async with client.stream("POST", url, headers=headers, json=payload) as resp:
-                    if resp.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_AI_RETRIES:
-                        await resp.aread()
-                        await asyncio.sleep(1.5 * attempt)
+        for model_idx, model_name in enumerate(model_chain):
+            payload = {
+                "model": model_name,
+                "messages": messages,
+                "temperature": temperature,
+                "stream": True,
+            }
+            has_next_model = model_idx < len(model_chain) - 1
+            attempts_for_model = MAX_AI_RETRIES if model_idx == 0 else 1
+
+            for attempt in range(1, attempts_for_model + 1):
+                yielded_any = False
+                try:
+                    async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                        if resp.status_code in FALLBACK_TRIGGER_CODES:
+                            body = (await resp.aread()).decode("utf-8", errors="ignore")
+                            last_error_msg = (
+                                f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {resp.status_code}: {body[:260]}"
+                            )
+                            if resp.status_code in RETRYABLE_STATUS_CODES and attempt < attempts_for_model:
+                                await asyncio.sleep(1.2)
+                                continue
+                            if has_next_model:
+                                break  # Auto-fallback to next model in chain!
+                            raise AIClientError(last_error_msg)
+
+                        if resp.status_code >= 400:
+                            body = (await resp.aread()).decode("utf-8", errors="ignore")
+                            raise AIClientError(
+                                f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {resp.status_code}: {body[:300]}"
+                            )
+
+                        async for raw_line in resp.aiter_lines():
+                            line = raw_line.strip()
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data_str = line[5:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            content = delta.get("content")
+                            if content:
+                                yielded_any = True
+                                yield content
+                        return
+                except httpx.HTTPError as exc:
+                    last_error_msg = f"เชื่อมต่อ Cloud LLM API ({model_name}) ไม่สำเร็จ: {exc}"
+                    if not yielded_any and attempt < attempts_for_model:
+                        await asyncio.sleep(1.2)
                         continue
+                    if not yielded_any and has_next_model:
+                        break
+                    raise AIClientError(last_error_msg) from exc
 
-                    if resp.status_code >= 400:
-                        body = (await resp.aread()).decode("utf-8", errors="ignore")
-                        raise AIClientError(
-                            f"Cloud LLM API ตอบกลับสถานะ {resp.status_code}: {body[:300]}"
-                        )
-
-                    async for raw_line in resp.aiter_lines():
-                        line = raw_line.strip()
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-                        choices = chunk.get("choices") or []
-                        if not choices:
-                            continue
-                        delta = choices[0].get("delta") or {}
-                        content = delta.get("content")
-                        if content:
-                            yielded_any = True
-                            yield content
-                    return
-            except httpx.HTTPError as exc:
-                if not yielded_any and attempt < MAX_AI_RETRIES:
-                    await asyncio.sleep(1.5 * attempt)
-                    continue
-                raise AIClientError(f"เชื่อมต่อ Cloud LLM API ไม่สำเร็จ: {exc}") from exc
+    raise AIClientError(last_error_msg)
