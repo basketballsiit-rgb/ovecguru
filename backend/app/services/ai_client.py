@@ -279,6 +279,7 @@ async def stream_chat_completion(
     model_idx = 0
     while model_idx < len(model_chain):
         model_name = model_chain[model_idx]
+        is_gemini_compat = "generativelanguage.googleapis.com" in base_url.lower()
         payload: Dict[str, object] = {
             "model": model_name,
             "messages": messages,
@@ -286,14 +287,61 @@ async def stream_chat_completion(
             "max_tokens": 1024,
             "stream": True,
         }
-        # Fail fast (15s read timeout) on congested/stalled models so fallback kicks in quickly
-        req_timeout = httpx.Timeout(connect=8.0, read=18.0, write=15.0, pool=8.0)
+        # Reduce Gemini silent thinking latency so first Thai token streams in ~1-3s
+        if is_gemini_compat and "gemini" in model_name.lower():
+            payload["reasoning_effort"] = "low"
+
+        # 45s read timeout accommodates thinking models without cutting off mid-stream
+        req_timeout = httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=10.0)
 
         yielded_any = False
         try:
             async with client.stream(
                 "POST", url, headers=headers, json=payload, timeout=req_timeout
             ) as resp:
+                # If a specific model doesn't accept reasoning_effort (HTTP 400), retry cleanly without it
+                if resp.status_code == 400 and "reasoning_effort" in payload:
+                    await resp.aread()
+                    payload.pop("reasoning_effort", None)
+                    async with client.stream(
+                        "POST", url, headers=headers, json=payload, timeout=req_timeout
+                    ) as retry_resp:
+                        if retry_resp.status_code in FALLBACK_TRIGGER_CODES:
+                            body = (await retry_resp.aread()).decode("utf-8", errors="ignore")
+                            last_error_msg = (
+                                f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {retry_resp.status_code}: {body[:240]}"
+                            )
+                            model_idx += 1
+                            continue
+                        if retry_resp.status_code >= 400:
+                            body = (await retry_resp.aread()).decode("utf-8", errors="ignore")
+                            raise AIClientError(
+                                f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {retry_resp.status_code}: {body[:300]}"
+                            )
+                        _working_model_cache["primary"] = primary_model
+                        _working_model_cache["model"] = model_name
+                        _working_model_cache["expires_at"] = time.monotonic() + _CACHE_TTL_SECONDS
+                        async for raw_line in retry_resp.aiter_lines():
+                            line = raw_line.strip()
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data_str = line[5:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            content = delta.get("content")
+                            if content:
+                                yielded_any = True
+                                yield content
+                        return
+
                 if resp.status_code in FALLBACK_TRIGGER_CODES:
                     body = (await resp.aread()).decode("utf-8", errors="ignore")
                     last_error_msg = (
