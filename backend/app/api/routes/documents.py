@@ -40,6 +40,7 @@ from app.schemas.document import (
     DocumentDetailResponse,
     DocumentResponse,
     DocumentStatusUpdateRequest,
+    DocumentUpdateRequest,
     ExtractPreviewResponse,
     KnowledgeGapResponse,
     KnowledgeGapUpdateRequest,
@@ -58,7 +59,11 @@ ingestion_roles = require_roles(
 admin_or_knowledge = require_roles(UserRole.SUPER_ADMIN, UserRole.KNOWLEDGE_ADMIN)
 
 
-def _to_document_response(doc: Document, chunk_count: int) -> DocumentResponse:
+def _to_document_response(
+    doc: Document,
+    chunk_count: int,
+    embedded_chunk_count: int = 0,
+) -> DocumentResponse:
     cat = doc.category
     grp = cat.group if cat else None
     return DocumentResponse(
@@ -76,6 +81,7 @@ def _to_document_response(doc: Document, chunk_count: int) -> DocumentResponse:
         created_by=doc.created_by,
         created_at=doc.created_at,
         chunk_count=chunk_count,
+        embedded_chunk_count=embedded_chunk_count,
     )
 
 
@@ -274,7 +280,11 @@ async def commit_document_incremental(
     new_doc.category = category
 
     return DocumentCommitResponse(
-        document=_to_document_response(new_doc, chunk_count=len(prepared_chunks)),
+        document=_to_document_response(
+            new_doc,
+            chunk_count=len(prepared_chunks),
+            embedded_chunk_count=embedded_count,
+        ),
         embedded_chunks=embedded_count,
         archived_previous_document_id=archived_old_id,
         embedding_warning=embedding_warning,
@@ -318,8 +328,22 @@ def list_documents(
             )
         ).all()
     )
+    embedded_counts = dict(
+        db.execute(
+            select(DocumentChunk.document_id, func.count(DocumentChunk.id))
+            .where(DocumentChunk.embedding.is_not(None))
+            .group_by(DocumentChunk.document_id)
+        ).all()
+    )
 
-    return [_to_document_response(doc, chunk_counts.get(doc.id, 0)) for doc in docs]
+    return [
+        _to_document_response(
+            doc,
+            chunk_count=chunk_counts.get(doc.id, 0),
+            embedded_chunk_count=embedded_counts.get(doc.id, 0),
+        )
+        for doc in docs
+    ]
 
 
 @router.get("/api/documents/{document_id}", response_model=DocumentDetailResponse)
@@ -336,11 +360,150 @@ def get_document_detail(document_id: int, db: Session = Depends(get_db)) -> Docu
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบเอกสารที่ระบุ")
 
-    base = _to_document_response(doc, chunk_count=len(doc.chunks))
+    embedded_cnt = sum(1 for c in doc.chunks if c.embedding is not None)
+    base = _to_document_response(doc, chunk_count=len(doc.chunks), embedded_chunk_count=embedded_cnt)
     return DocumentDetailResponse(
         **base.model_dump(),
         chunks=[DocumentChunkResponse.model_validate(c) for c in doc.chunks],
     )
+
+
+@router.patch("/api/documents/{document_id}", response_model=DocumentResponse)
+def update_document_metadata(
+    document_id: int,
+    payload: DocumentUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_or_knowledge),
+    policy: GovernancePolicy = Depends(get_governance_policy),
+) -> DocumentResponse:
+    """Update document metadata (title, category_id, effective_date, optional status)."""
+    doc = db.scalar(
+        select(Document)
+        .options(joinedload(Document.category).joinedload(DocumentCategory.group))
+        .where(Document.id == document_id)
+    )
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบเอกสารที่ระบุ")
+
+    if payload.status is not None and payload.status != doc.status:
+        ensure_can_archive_document(current_user, policy)
+        doc.status = payload.status
+
+    if payload.category_id is not None:
+        cat = db.scalar(
+            select(DocumentCategory)
+            .options(joinedload(DocumentCategory.group))
+            .where(DocumentCategory.id == payload.category_id)
+        )
+        if cat is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบหมวดหมู่เอกสารที่เลือก")
+        doc.category_id = payload.category_id
+        doc.category = cat
+
+    if payload.title is not None:
+        doc.title = payload.title.strip()
+    if payload.effective_date is not None:
+        doc.effective_date = payload.effective_date
+
+    db.commit()
+    db.refresh(doc)
+
+    chunk_count = (
+        db.scalar(select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == doc.id))
+        or 0
+    )
+    embedded_count = (
+        db.scalar(
+            select(func.count(DocumentChunk.id)).where(
+                DocumentChunk.document_id == doc.id,
+                DocumentChunk.embedding.is_not(None),
+            )
+        )
+        or 0
+    )
+    return _to_document_response(doc, chunk_count=chunk_count, embedded_chunk_count=embedded_count)
+
+
+@router.post("/api/documents/{document_id}/reembed", response_model=DocumentResponse)
+async def reembed_document_chunks(
+    document_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(admin_or_knowledge),
+) -> DocumentResponse:
+    """Re-generate vector embeddings via Cloud Embedding API for all chunks of a document."""
+    doc = db.scalar(
+        select(Document)
+        .options(
+            joinedload(Document.category).joinedload(DocumentCategory.group),
+            joinedload(Document.chunks),
+        )
+        .where(Document.id == document_id)
+    )
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบเอกสารที่ระบุ")
+    if not doc.chunks:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="เอกสารนี้ไม่มี Chunk สำหรับสร้างเวกเตอร์")
+
+    texts = [
+        f"{doc.title}\n{c.clause_heading or ''}\n{c.content_text}".strip()
+        for c in doc.chunks
+    ]
+    try:
+        vectors = await create_embeddings(texts)
+    except AIClientError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"ไม่สามารถสร้างเวกเตอร์ใหม่ผ่าน Cloud Embedding API ได้: {exc}",
+        )
+
+    for chunk, vec in zip(doc.chunks, vectors):
+        chunk.embedding = vec
+
+    db.commit()
+    return _to_document_response(doc, chunk_count=len(doc.chunks), embedded_chunk_count=len(vectors))
+
+
+@router.delete("/api/documents/{document_id}", status_code=status.HTTP_200_OK)
+def delete_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    policy: GovernancePolicy = Depends(get_governance_policy),
+) -> dict:
+    """Permanently delete a document, its chunks/vectors, and its physical file in UPLOAD_DIR."""
+    ensure_can_archive_document(current_user, policy)
+
+    doc = db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบเอกสารที่ระบุ")
+
+    file_path_str = doc.file_path
+    db.delete(doc)
+    db.commit()
+
+    # Delete physical file from UPLOAD_DIR only if no other document record references it
+    file_deleted = False
+    if file_path_str and not file_path_str.startswith("manual://"):
+        still_used = (
+            db.scalar(select(func.count(Document.id)).where(Document.file_path == file_path_str))
+            or 0
+        )
+        if still_used == 0:
+            try:
+                upload_root = Path(settings.UPLOAD_DIR).resolve()
+                target = Path(file_path_str).resolve()
+                target.relative_to(upload_root)
+                if target.is_file():
+                    target.unlink()
+                    file_deleted = True
+            except (ValueError, OSError):
+                pass
+
+    return {
+        "message": "ลบเอกสารและเวกเตอร์ที่เกี่ยวข้องเรียบร้อยแล้ว",
+        "deleted_document_id": document_id,
+        "file_deleted": file_deleted,
+    }
 
 
 @router.patch("/api/documents/{document_id}/status", response_model=DocumentResponse)

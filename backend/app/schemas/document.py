@@ -56,6 +56,13 @@ class DocumentStatusUpdateRequest(BaseModel):
     status: DocumentStatus
 
 
+class DocumentUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=2, max_length=500)
+    category_id: Optional[int] = None
+    effective_date: Optional[date] = None
+    status: Optional[DocumentStatus] = None
+
+
 class DocumentChunkResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -83,6 +90,7 @@ class DocumentResponse(BaseModel):
     created_by: Optional[int] = None
     created_at: datetime
     chunk_count: int = 0
+    embedded_chunk_count: int = 0
 
 
 class DocumentDetailResponse(DocumentResponse):

@@ -183,6 +183,36 @@ export async function updateDocumentStatusApi(token, documentId, newStatus) {
   return handleJsonResponse(res, "ไม่สามารถเปลี่ยนสถานะเอกสารได้");
 }
 
+export async function fetchDocumentDetailApi(documentId) {
+  const res = await fetch(apiUrl(`/api/documents/${documentId}`));
+  return handleJsonResponse(res, "ไม่สามารถโหลดรายละเอียดเอกสารได้");
+}
+
+export async function updateDocumentApi(token, documentId, payload) {
+  const res = await fetch(apiUrl(`/api/documents/${documentId}`), {
+    method: "PATCH",
+    headers: authHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify(payload),
+  });
+  return handleJsonResponse(res, "ไม่สามารถแก้ไขข้อมูลเอกสารได้");
+}
+
+export async function reembedDocumentApi(token, documentId) {
+  const res = await fetch(apiUrl(`/api/documents/${documentId}/reembed`), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  return handleJsonResponse(res, "ไม่สามารถสร้างเวกเตอร์ใหม่ได้");
+}
+
+export async function deleteDocumentApi(token, documentId) {
+  const res = await fetch(apiUrl(`/api/documents/${documentId}`), {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handleJsonResponse(res, "ไม่สามารถลบเอกสารได้");
+}
+
 export async function fetchKnowledgeGapsApi(token, status = null) {
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
   const res = await fetch(apiUrl(`/api/admin/knowledge-gaps${qs}`), {

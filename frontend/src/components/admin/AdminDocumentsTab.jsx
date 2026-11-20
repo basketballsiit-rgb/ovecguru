@@ -4,24 +4,33 @@ import {
   Archive,
   CheckCircle2,
   ExternalLink,
+  Eye,
   FilePlus2,
   FileText,
   Layers,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Sparkles,
+  Trash2,
   UploadCloud,
+  X,
 } from "lucide-react";
 import {
   apiUrl,
   chunkPreviewApi,
   commitDocumentApi,
   createCategoryApi,
+  deleteDocumentApi,
   extractPreviewApi,
+  fetchDocumentDetailApi,
   fetchDocumentsApi,
   fetchKnowledgeGapsApi,
+  reembedDocumentApi,
+  updateDocumentApi,
   updateDocumentStatusApi,
   updateKnowledgeGapApi,
 } from "../../lib/api";
@@ -68,6 +77,17 @@ export default function AdminDocumentsTab({
 
   const [gaps, setGaps] = useState([]);
   const [gapsLoading, setGapsLoading] = useState(true);
+
+  // Document CRUD Modals (View Chunks / Edit Metadata / Re-embed)
+  const [viewingDoc, setViewingDoc] = useState(null);
+  const [viewingLoading, setViewingLoading] = useState(false);
+  const [reembeddingId, setReembeddingId] = useState(null);
+
+  const [editingDoc, setEditingDoc] = useState(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editCategoryId, setEditCategoryId] = useState("");
+  const [editEffectiveDate, setEditEffectiveDate] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const [notice, setNotice] = useState(null); // { type: 'success'|'error'|'warning', text }
   const fileInputRef = useRef(null);
@@ -296,6 +316,97 @@ export default function AdminDocumentsTab({
         text: `เปลี่ยนสถานะเอกสาร "${doc.title}" เป็น ${
           nextStatus === "active" ? "บังคับใช้ล่าสุด" : "ยกเลิกแล้ว (Archived)"
         } เรียบร้อยแล้ว`,
+      });
+    } catch (err) {
+      setNotice({ type: "error", text: err.message });
+    }
+  };
+
+  const handleOpenViewDoc = async (doc) => {
+    setViewingLoading(true);
+    setViewingDoc({ ...doc, chunks: [] });
+    try {
+      const detail = await fetchDocumentDetailApi(doc.id);
+      setViewingDoc(detail);
+    } catch (err) {
+      setNotice({ type: "error", text: err.message });
+      setViewingDoc(null);
+    } finally {
+      setViewingLoading(false);
+    }
+  };
+
+  const handleOpenEditDoc = (doc) => {
+    setEditingDoc(doc);
+    setEditTitle(doc.title || "");
+    setEditCategoryId(String(doc.category_id || ""));
+    setEditEffectiveDate(doc.effective_date || "");
+  };
+
+  const handleSaveEditDoc = async (e) => {
+    e.preventDefault();
+    if (!editingDoc || !editTitle.trim() || !editCategoryId) return;
+    setSavingEdit(true);
+    setNotice(null);
+    try {
+      const updated = await updateDocumentApi(token, editingDoc.id, {
+        title: editTitle.trim(),
+        category_id: Number(editCategoryId),
+        effective_date: editEffectiveDate || null,
+      });
+      setEditingDoc(null);
+      await Promise.all([loadDocuments(), onTaxonomyChanged()]);
+      setNotice({
+        type: "success",
+        text: `บันทึกการแก้ไขเอกสาร "${updated.title}" เรียบร้อยแล้ว`,
+      });
+    } catch (err) {
+      setNotice({ type: "error", text: err.message });
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleReembedDoc = async (doc) => {
+    setReembeddingId(doc.id);
+    setNotice(null);
+    try {
+      const updated = await reembedDocumentApi(token, doc.id);
+      await loadDocuments();
+      if (viewingDoc?.id === doc.id) {
+        setViewingDoc((prev) =>
+          prev
+            ? { ...prev, embedded_chunk_count: updated.embedded_chunk_count }
+            : prev
+        );
+      }
+      setNotice({
+        type: "success",
+        text: `สร้างเวกเตอร์ใหม่ให้ "${updated.title}" สำเร็จ (${updated.embedded_chunk_count}/${updated.chunk_count} Chunks)`,
+      });
+    } catch (err) {
+      setNotice({ type: "error", text: err.message });
+    } finally {
+      setReembeddingId(null);
+    }
+  };
+
+  const handleDeleteDoc = async (doc) => {
+    if (
+      !window.confirm(
+        `ยืนยันการลบเอกสารถาวร "${doc.title}" ?\n(จะลบทั้งข้อมูลเอกสาร, เวกเตอร์ ${doc.chunk_count} Chunks และไฟล์ต้นฉบับออกจากเซิร์ฟเวอร์)`
+      )
+    ) {
+      return;
+    }
+    setNotice(null);
+    try {
+      await deleteDocumentApi(token, doc.id);
+      if (viewingDoc?.id === doc.id) setViewingDoc(null);
+      await Promise.all([loadDocuments(), onTaxonomyChanged()]);
+      setNotice({
+        type: "success",
+        text: `ลบเอกสาร "${doc.title}" และเวกเตอร์ที่เกี่ยวข้องเรียบร้อยแล้ว`,
       });
     } catch (err) {
       setNotice({ type: "error", text: err.message });
@@ -732,8 +843,15 @@ export default function AdminDocumentsTab({
                         <span className="text-[11px] bg-rose-50 text-ovec-maroon px-2 py-0.5 rounded-full">
                           {doc.category_name}
                         </span>
-                        <span className="text-[11px] text-stone-400">
-                          {doc.chunk_count} Chunks
+                        <span
+                          className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                            doc.embedded_chunk_count >= doc.chunk_count && doc.chunk_count > 0
+                              ? "bg-blue-50 text-blue-800 border border-blue-200"
+                              : "bg-amber-50 text-amber-800 border border-amber-200"
+                          }`}
+                          title="จำนวน Chunk ที่สร้างเวกเตอร์แล้ว"
+                        >
+                          {doc.embedded_chunk_count ?? 0}/{doc.chunk_count} Vector
                         </span>
                       </div>
                       <div className="text-xs sm:text-sm font-semibold text-stone-900 truncate">
@@ -744,18 +862,41 @@ export default function AdminDocumentsTab({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenViewDoc(doc)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100"
+                        title="ดูเนื้อหา Chunks และสร้างเวกเตอร์ใหม่"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-ovec-maroon" />
+                        <span className="hidden sm:inline">ดู</span>
+                      </button>
+
+                      {canViewGaps && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditDoc(doc)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100"
+                          title="แก้ไขชื่อ หมวดหมู่ หรือวันที่บังคับใช้"
+                        >
+                          <Pencil className="w-3.5 h-3.5 text-stone-600" />
+                          <span className="hidden sm:inline">แก้ไข</span>
+                        </button>
+                      )}
+
                       {!doc.file_path.startsWith("manual://") && (
                         <a
                           href={apiUrl(doc.file_url)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2.5 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100"
+                          className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100"
+                          title="เปิดไฟล์ต้นฉบับ"
                         >
-                          <ExternalLink className="w-3 h-3" />
-                          ไฟล์
+                          <ExternalLink className="w-3.5 h-3.5" />
                         </a>
                       )}
+
                       <button
                         type="button"
                         disabled={!canArchiveDocs}
@@ -768,6 +909,16 @@ export default function AdminDocumentsTab({
                       >
                         <Archive className="w-3 h-3" />
                         {doc.status === "active" ? "ยกเลิกใช้" : "เปิดใช้งาน"}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={!canArchiveDocs}
+                        onClick={() => handleDeleteDoc(doc)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50/70 hover:bg-rose-100 px-2 py-1 text-[11px] font-semibold text-rose-700 transition disabled:opacity-40"
+                        title="ลบเอกสารถาวร"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -842,6 +993,160 @@ export default function AdminDocumentsTab({
           </div>
         </div>
       </div>
+
+      {/* Modal: Edit Document Metadata */}
+      {editingDoc && (
+        <div className="fixed inset-0 z-50 bg-stone-900/50 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white border border-stone-200 shadow-2xl overflow-hidden">
+            <div className="ovec-header-gradient px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-bold">
+                <Pencil className="w-4 h-4 text-amber-300" />
+                แก้ไขข้อมูลเอกสาร #{editingDoc.id}
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingDoc(null)}
+                className="p-1 rounded-lg hover:bg-white/15"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditDoc} className="p-5 space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  ชื่อประกาศ / ชื่อเอกสาร *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full rounded-xl border border-stone-300 px-3.5 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">
+                    วันที่บังคับใช้
+                  </label>
+                  <input
+                    type="date"
+                    value={editEffectiveDate}
+                    onChange={(e) => setEditEffectiveDate(e.target.value)}
+                    className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">
+                    หมวดหมู่เอกสาร *
+                  </label>
+                  <select
+                    required
+                    value={editCategoryId}
+                    onChange={(e) => setEditCategoryId(e.target.value)}
+                    className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
+                  >
+                    {groups.map((grp) => (
+                      <optgroup key={grp.id} label={grp.name}>
+                        {(grp.categories || []).map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingDoc(null)}
+                  className="rounded-xl border border-stone-200 px-4 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-100"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-ovec-maroon hover:bg-ovec-dark text-white px-4 py-2 text-xs font-semibold shadow-sm transition disabled:opacity-60"
+                >
+                  <Save className="w-3.5 h-3.5 text-amber-300" />
+                  {savingEdit ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: View Document Chunks & Re-embed */}
+      {viewingDoc && (
+        <div className="fixed inset-0 z-50 bg-stone-900/50 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl max-h-[85vh] rounded-2xl bg-white border border-stone-200 shadow-2xl flex flex-col overflow-hidden">
+            <div className="ovec-header-gradient px-5 py-3.5 text-white flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-sm font-bold truncate">{viewingDoc.title}</div>
+                <div className="text-[11px] text-rose-100">
+                  {viewingDoc.category_name} • บังคับใช้ {formatThaiDate(viewingDoc.effective_date)} • เวกเตอร์ {viewingDoc.embedded_chunk_count ?? 0}/{viewingDoc.chunk_count} Chunks
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingDoc(null)}
+                className="p-1.5 rounded-lg hover:bg-white/15 shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-3 bg-ovec-cream border-b border-stone-200 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-stone-600">
+                แสดงเนื้อหาทั้งหมดที่ถูกหั่นเก็บไว้ในฐานข้อมูล Vector DB
+              </span>
+              {canViewGaps && (
+                <button
+                  type="button"
+                  disabled={reembeddingId === viewingDoc.id}
+                  onClick={() => handleReembedDoc(viewingDoc)}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-ovec-maroon hover:bg-ovec-dark text-white px-3.5 py-1.5 text-xs font-semibold shadow-sm transition disabled:opacity-60"
+                >
+                  {reembeddingId === viewingDoc.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  )}
+                  สร้างเวกเตอร์ใหม่ (Re-embed)
+                </button>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {viewingLoading ? (
+                <div className="py-10 text-center text-xs text-stone-500">กำลังโหลดเนื้อหา Chunks...</div>
+              ) : (
+                (viewingDoc.chunks || []).map((ch) => (
+                  <div
+                    key={ch.id}
+                    className="rounded-xl border border-stone-200 bg-stone-50/70 p-3.5 text-sm"
+                  >
+                    <div className="text-xs font-bold text-ovec-maroon mb-1">
+                      #{ch.chunk_index + 1} • {ch.clause_heading || "เนื้อหาเอกสาร"}
+                    </div>
+                    <p className="whitespace-pre-wrap text-stone-800 leading-relaxed">
+                      {ch.content_text}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
