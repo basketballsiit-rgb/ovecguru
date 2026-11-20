@@ -16,7 +16,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import { streamChatApi } from "../lib/api";
-import CitationCard from "./CitationCard";
+import CitationsSection from "./CitationCard";
 import SourceViewer from "./SourceViewer";
 
 const SAMPLE_QUESTIONS = [
@@ -441,25 +441,15 @@ export default function ChatInterface({ categories = [], categoriesLoading = fal
                         )}
                       </div>
 
-                      {/* Verified Citation & Date Cards */}
+                      {/* Verified Citation & Date Section (Primary Card + Compact Collapsible List) */}
                       {meta?.citations?.length > 0 && (
-                        <div className="space-y-2.5">
-                          <div className="text-xs font-semibold text-stone-500 px-1">
-                            แหล่งอ้างอิงที่ตรวจสอบแล้ว ({meta.citations.length} ฉบับ)
-                          </div>
-                          {meta.citations.map((citation) => (
-                            <CitationCard
-                              key={citation.document_id}
-                              citation={citation}
-                              question={msg.question}
-                              answer={msg.content}
-                              isSelected={
-                                activeSource?.document_id === citation.document_id
-                              }
-                              onOpenSource={(cit) => setActiveSource(cit)}
-                            />
-                          ))}
-                        </div>
+                        <CitationsSection
+                          citations={meta.citations}
+                          question={msg.question}
+                          answer={msg.content}
+                          activeSourceId={activeSource?.document_id}
+                          onOpenSource={(cit) => setActiveSource(cit)}
+                        />
                       )}
                     </div>
                   </div>
