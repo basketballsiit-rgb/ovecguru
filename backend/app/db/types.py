@@ -8,12 +8,14 @@ from sqlalchemy.types import TypeDecorator
 class EmbeddingVector(TypeDecorator):
     """Cross-dialect vector column type.
 
-    - PostgreSQL (Production / Supabase / Docker pgvector): native `pgvector` Vector(dim).
+    - PostgreSQL (Production / Supabase / Docker pgvector): native `pgvector` Vector(dim)
+      with full comparator support (`cosine_distance`, `l2_distance`, `max_inner_product`).
     - SQLite (Zero-setup local Windows dev): JSON array of floats.
     """
 
     impl = JSON
     cache_ok = True
+    comparator_factory = Vector.comparator_factory
 
     def __init__(self, dim: int) -> None:
         super().__init__()
@@ -34,4 +36,4 @@ class EmbeddingVector(TypeDecorator):
     def process_result_value(self, value: Any, dialect: Any):
         if value is None:
             return None
-        return list(value)
+        return [float(x) for x in value]

@@ -192,7 +192,7 @@ async def hybrid_search_active_chunks(
             )
             for chunk in db.scalars(kw_stmt).all():
                 candidate_chunks.setdefault(chunk.id, chunk)
-                if chunk.id not in vector_scores and chunk.embedding:
+                if chunk.id not in vector_scores and chunk.embedding is not None and len(chunk.embedding) > 0:
                     vector_scores[chunk.id] = _cosine_similarity(query_embedding, list(chunk.embedding))
     else:
         # SQLite dev mode or keyword-only fallback
@@ -209,7 +209,7 @@ async def hybrid_search_active_chunks(
         )
         for chunk in db.scalars(stmt).all():
             candidate_chunks[chunk.id] = chunk
-            if query_embedding is not None and chunk.embedding:
+            if query_embedding is not None and chunk.embedding is not None and len(chunk.embedding) > 0:
                 vector_scores[chunk.id] = _cosine_similarity(query_embedding, list(chunk.embedding))
 
     if not candidate_chunks:
@@ -229,7 +229,8 @@ async def hybrid_search_active_chunks(
         kw_s = _keyword_score(question, keywords, doc.title, chunk.clause_heading, chunk.content_text)
         rec_s = _recency_score(doc.effective_date, newest_date)
 
-        if query_embedding is not None and chunk.embedding:
+        has_vec = chunk.embedding is not None and len(chunk.embedding) > 0
+        if query_embedding is not None and has_vec:
             combined = 0.65 * vec_s + 0.25 * kw_s + 0.10 * rec_s
         else:
             # Keyword + recency fallback when embedding is unavailable
