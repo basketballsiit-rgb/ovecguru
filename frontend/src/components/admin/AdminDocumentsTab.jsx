@@ -42,6 +42,7 @@ export default function AdminDocumentsTab({
 
   // Ingestion / OCR / Chunking state (3 steps)
   const [step, setStep] = useState(1); // 1=Upload, 2=Review OCR & Chunks, 3=Committed
+  const [forceOcr, setForceOcr] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [chunking, setChunking] = useState(false);
@@ -191,7 +192,7 @@ export default function AdminDocumentsTab({
     setNotice(null);
     setStep(1);
     try {
-      const res = await extractPreviewApi(token, file);
+      const res = await extractPreviewApi(token, file, forceOcr);
       setUploadedInfo(res);
       setIngestionType(res.ingestion_type);
       setFilePath(res.file_path);
@@ -474,6 +475,19 @@ export default function AdminDocumentsTab({
                 </div>
               )}
             </div>
+
+            {/* Force Thai OCR toggle for legacy Thai government PDFs */}
+            <label className="flex items-center gap-2 text-xs text-stone-700 bg-ovec-cream/70 border border-stone-200 rounded-xl px-3 py-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={forceOcr}
+                onChange={(e) => setForceOcr(e.target.checked)}
+                className="rounded border-stone-300 text-ovec-maroon focus:ring-ovec-maroon"
+              />
+              <span>
+                <strong>บังคับใช้ Thai OCR (Poppler + Tesseract tha+eng)</strong> — แนะนำสำหรับไฟล์ PDF ราชการภาษาไทยที่ฟอนต์เพี้ยน/สแกน (ระบบจะสลับอัตโนมัติให้ด้วยหากตรวจพบภาษาต่างดาว)
+              </span>
+            </label>
 
             {/* Human-in-the-Loop Editable OCR Textarea */}
             <div>

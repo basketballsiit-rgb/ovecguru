@@ -134,10 +134,11 @@ export async function deleteCategoryApi(token, categoryId) {
 // Documents, OCR Preview, Structure-Aware Chunking & Knowledge Gaps
 // ==============================================================================
 
-export async function extractPreviewApi(token, file) {
+export async function extractPreviewApi(token, file, forceOcr = false) {
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch(apiUrl("/api/documents/extract-preview"), {
+  const qs = forceOcr ? "?force_ocr=true" : "";
+  const res = await fetch(apiUrl(`/api/documents/extract-preview${qs}`), {
     method: "POST",
     headers: authHeaders(token),
     body: formData,

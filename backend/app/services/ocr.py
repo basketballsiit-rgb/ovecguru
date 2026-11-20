@@ -74,21 +74,52 @@ def _ocr_image(image: Image.Image) -> str:
         )
 
 
-def _extract_from_pdf(file_path: Path) -> Dict[str, object]:
+def _is_garbled_pdf_text(text: str) -> bool:
+    """Detect broken ToUnicode CMap / legacy Thai PDF mojibake so we auto-fallback to Thai OCR."""
+    compact = re.sub(r"\s+", "", text)
+    total = len(compact)
+    if total == 0:
+        return True
+
+    # Readable Thai (ก-๛) and standard Latin/digits
+    readable = len(re.findall(r"[ก-๛A-Za-z0-9]", compact))
+    # Common mojibake glyphs from broken Thai PDF CMaps: arrows, box-drawing, PUA, control/replacement
+    weird_unicode = len(re.findall(r"[\u2190-\u27ff\ue000-\uf8ff\ufffd]", compact))
+    # Dense noise punctuation (@, #, %, $, ^, `, <, >, ?, |, /, \)
+    noise_punct = len(re.findall(r"[@#%$^`<>?|/\\]", compact))
+
+    readable_ratio = readable / total
+    weird_ratio = weird_unicode / total
+    noise_ratio = noise_punct / total
+
+    # Normal Thai/English official PDFs have >80% readable characters and <2% weird glyphs
+    if readable_ratio < 0.65:
+        return True
+    if weird_ratio > 0.03:
+        return True
+    if noise_ratio > 0.12:
+        return True
+    return False
+
+
+def _extract_from_pdf(file_path: Path, force_ocr: bool = False) -> Dict[str, object]:
     reader = PdfReader(str(file_path))
     page_count = len(reader.pages)
     extracted_pages = []
 
-    for page in reader.pages:
-        page_text = (page.extract_text() or "").strip()
-        extracted_pages.append(page_text)
+    if not force_ocr:
+        for page in reader.pages:
+            page_text = (page.extract_text() or "").strip()
+            extracted_pages.append(page_text)
 
     combined_text = "\n\n".join(p for p in extracted_pages if p).strip()
     meaningful_chars = len(re.sub(r"\s+", "", combined_text))
     avg_chars_per_page = meaningful_chars / max(page_count, 1)
+    garbled = _is_garbled_pdf_text(combined_text)
 
-    # Fallback to Poppler (pdf2image) + Tesseract OCR (tha+eng) when PDF is scanned or text-sparse
-    if meaningful_chars < 80 or avg_chars_per_page < 30:
+    # Fallback to Poppler (pdf2image) + Tesseract OCR (tha+eng) when PDF is scanned, text-sparse,
+    # has broken Thai font encoding (mojibake), or force_ocr=True
+    if force_ocr or meaningful_chars < 80 or avg_chars_per_page < 30 or garbled:
         try:
             from pdf2image import convert_from_path
         except ImportError as exc:
@@ -171,10 +202,10 @@ def _extract_from_image(file_path: Path) -> Dict[str, object]:
     }
 
 
-def extract_document_text(file_path: Path, ext: str) -> Dict[str, object]:
+def extract_document_text(file_path: Path, ext: str, force_ocr: bool = False) -> Dict[str, object]:
     """Dispatch text extraction based on file extension."""
     if ext == ".pdf":
-        return _extract_from_pdf(file_path)
+        return _extract_from_pdf(file_path, force_ocr=force_ocr)
     if ext == ".docx":
         return _extract_from_docx(file_path)
     if ext in IMAGE_EXTENSIONS:

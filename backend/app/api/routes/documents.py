@@ -107,13 +107,14 @@ def _validate_upload_path(file_path_str: str) -> Path:
 def extract_and_preview_document(
     file: UploadFile = File(...),
     max_chars: int = Query(default=1200, ge=300, le=4000),
+    force_ocr: bool = Query(default=False, description="บังคับใช้ Thai OCR (Poppler + Tesseract tha+eng)"),
     _user: User = Depends(ingestion_roles),
 ) -> ExtractPreviewResponse:
     """Upload PDF/DOCX/Image into UPLOAD_DIR, extract text (pypdf or Poppler+Tesseract tha+eng),
     and return editable text + Structure-Aware Chunk preview for Human-in-the-Loop review.
     """
     stored_filename, abs_path, ext = save_uploaded_file(file)
-    extraction = extract_document_text(abs_path, ext)
+    extraction = extract_document_text(abs_path, ext, force_ocr=force_ocr)
     extracted_text = str(extraction["extracted_text"])
 
     chunks_raw = chunk_thai_official_text(extracted_text, max_chars=max_chars)
