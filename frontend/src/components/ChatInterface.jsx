@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { streamChatApi } from "../lib/api";
 import CitationsSection from "./CitationCard";
+import FormattedAnswer from "./FormattedAnswer";
 import SourceViewer from "./SourceViewer";
 
 const SAMPLE_QUESTIONS = [
@@ -421,12 +422,10 @@ export default function ChatInterface({ categories = [], categoriesLoading = fal
                       {/* Assistant Answer Bubble */}
                       <div className="rounded-2xl rounded-tl-sm bg-white border border-stone-200/90 px-4 sm:px-5 py-4 shadow-card">
                         {msg.content ? (
-                          <div className="text-base text-stone-800 leading-relaxed whitespace-pre-wrap">
-                            {msg.content}
-                            {msg.streaming && (
-                              <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-ovec-maroon animate-pulse rounded-sm" />
-                            )}
-                          </div>
+                          <FormattedAnswer
+                            content={msg.content}
+                            streaming={msg.streaming}
+                          />
                         ) : msg.streaming ? (
                           <div className="flex items-center gap-2 text-sm text-stone-500">
                             <Loader2 className="w-4 h-4 animate-spin text-ovec-maroon" />
