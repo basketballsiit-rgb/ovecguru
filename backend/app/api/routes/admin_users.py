@@ -29,6 +29,7 @@ from app.services.ai_client import (
     create_embeddings,
     get_live_ai_config,
     is_ai_configured,
+    list_available_models,
     mask_api_key,
 )
 
@@ -347,5 +348,14 @@ async def test_ai_config(_admin: User = Depends(super_admin_only)) -> dict:
             "message": f"เชื่อมต่อ Cloud AI API สำเร็จ! (ขนาดเวกเตอร์ Embedding: {dim} มิติ)",
             "vector_dimensions": dim,
         }
+    except AIClientError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/api/admin/ai-config/models")
+async def get_available_ai_models(_admin: User = Depends(super_admin_only)) -> dict:
+    """List live chat & embedding models supported by the configured API Key."""
+    try:
+        return await list_available_models()
     except AIClientError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

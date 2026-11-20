@@ -19,13 +19,53 @@ RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 FALLBACK_TRIGGER_CODES = {404, 429, 500, 502, 503, 504}
 MAX_AI_RETRIES = 2
 
-GEMINI_CHAT_FALLBACK_MODELS = [
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-3.8-flash-lite",
-    "gemini-2.5-flash",
-]
+_NON_CHAT_KEYWORDS = ("embedding", "imagen", "veo", "aqa", "tts", "audio", "whisper", "dall-e", "moderation")
+
+
+async def list_available_models() -> Dict[str, List[str]]:
+    """Query OpenAI-compatible GET /models using the live API Key and group chat vs embedding models."""
+    cfg = get_live_ai_config()
+    base_url = str(cfg["api_base_url"])
+    headers = _auth_headers(str(cfg["api_key"]))
+    url = _build_url(base_url, "models")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        try:
+            resp = await client.get(url, headers=headers)
+        except httpx.HTTPError as exc:
+            raise AIClientError(f"ไม่สามารถดึงรายชื่อโมเดลจาก API ได้: {exc}") from exc
+
+        if resp.status_code >= 400:
+            raise AIClientError(f"GET /models ตอบกลับสถานะ {resp.status_code}: {resp.text[:250]}")
+
+        data = resp.json()
+
+    raw_ids: List[str] = []
+    for item in data.get("data", []):
+        mid = str(item.get("id") or "").strip()
+        if not mid:
+            continue
+        # Strip leading "models/" prefix if returned by Gemini OpenAI-compat endpoint
+        if mid.startswith("models/"):
+            mid = mid[7:]
+        if mid not in raw_ids:
+            raw_ids.append(mid)
+
+    embedding_models = [m for m in raw_ids if "embedding" in m.lower()]
+    chat_models = [
+        m for m in raw_ids if not any(bad in m.lower() for bad in _NON_CHAT_KEYWORDS)
+    ]
+
+    # Prioritize fast flash / lite models first for low latency & high availability
+    def _chat_rank(name: str) -> tuple:
+        low = name.lower()
+        is_lite = 0 if "lite" in low else 1
+        is_flash = 0 if "flash" in low else 1
+        is_preview = 1 if ("preview" in low or "exp" in low) else 0
+        return (is_flash, is_lite, is_preview, low)
+
+    chat_models.sort(key=_chat_rank)
+    return {"chat_models": chat_models, "embedding_models": embedding_models}
 
 
 class AIClientError(RuntimeError):
@@ -159,13 +199,18 @@ async def create_embeddings(texts: List[str], batch_size: int = 32) -> List[List
     return all_embeddings
 
 
-def _build_chat_model_chain(primary_model: str, base_url: str) -> List[str]:
-    """Build ordered list of models to try (auto-fallback for Google Gemini on 503/429/404)."""
+async def _build_chat_model_chain(primary_model: str) -> List[str]:
+    """Build ordered list of live models starting with primary_model, then discovered /models fallbacks."""
     chain = [primary_model]
-    if "generativelanguage.googleapis.com" in base_url.lower():
-        for fallback in GEMINI_CHAT_FALLBACK_MODELS:
-            if fallback not in chain:
-                chain.append(fallback)
+    try:
+        discovered = await list_available_models()
+        for candidate in discovered.get("chat_models", []):
+            if candidate not in chain:
+                chain.append(candidate)
+            if len(chain) >= 6:
+                break
+    except AIClientError:
+        pass
     return chain
 
 
@@ -174,24 +219,27 @@ async def stream_chat_completion(
     temperature: float = 0.1,
 ) -> AsyncGenerator[str, None]:
     """Stream text deltas from an OpenAI-compatible /chat/completions endpoint
-    with automatic retry AND automatic fallback across Gemini models on 503/429/404.
+    with automatic retry AND dynamic fallback across live models from GET /models on 503/429/404.
     """
     cfg = get_live_ai_config()
     base_url = str(cfg["api_base_url"])
     headers = _auth_headers(str(cfg["api_key"]))
     url = _build_url(base_url, "chat/completions")
-    model_chain = _build_chat_model_chain(str(cfg["chat_model"]), base_url)
+    primary_model = str(cfg["chat_model"])
+    model_chain: List[str] = [primary_model]
+    discovered_loaded = False
     last_error_msg = "ไม่สามารถเชื่อมต่อ Cloud LLM API ได้"
 
     async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
-        for model_idx, model_name in enumerate(model_chain):
+        model_idx = 0
+        while model_idx < len(model_chain):
+            model_name = model_chain[model_idx]
             payload = {
                 "model": model_name,
                 "messages": messages,
                 "temperature": temperature,
                 "stream": True,
             }
-            has_next_model = model_idx < len(model_chain) - 1
             attempts_for_model = MAX_AI_RETRIES if model_idx == 0 else 1
 
             for attempt in range(1, attempts_for_model + 1):
@@ -204,11 +252,13 @@ async def stream_chat_completion(
                                 f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {resp.status_code}: {body[:260]}"
                             )
                             if resp.status_code in RETRYABLE_STATUS_CODES and attempt < attempts_for_model:
-                                await asyncio.sleep(1.2)
+                                await asyncio.sleep(1.0)
                                 continue
-                            if has_next_model:
-                                break  # Auto-fallback to next model in chain!
-                            raise AIClientError(last_error_msg)
+                            # Dynamically discover live fallback models from GET /models on first failure
+                            if not discovered_loaded:
+                                discovered_loaded = True
+                                model_chain = await _build_chat_model_chain(primary_model)
+                            break
 
                         if resp.status_code >= 400:
                             body = (await resp.aread()).decode("utf-8", errors="ignore")
@@ -239,10 +289,15 @@ async def stream_chat_completion(
                 except httpx.HTTPError as exc:
                     last_error_msg = f"เชื่อมต่อ Cloud LLM API ({model_name}) ไม่สำเร็จ: {exc}"
                     if not yielded_any and attempt < attempts_for_model:
-                        await asyncio.sleep(1.2)
+                        await asyncio.sleep(1.0)
                         continue
-                    if not yielded_any and has_next_model:
+                    if not yielded_any and not discovered_loaded:
+                        discovered_loaded = True
+                        model_chain = await _build_chat_model_chain(primary_model)
+                    if not yielded_any:
                         break
                     raise AIClientError(last_error_msg) from exc
+
+            model_idx += 1
 
     raise AIClientError(last_error_msg)
