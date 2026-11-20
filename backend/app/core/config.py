@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     AI_API_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     AI_API_KEY: str = ""
     AI_CHAT_MODEL: str = "gemini-2.5-flash"
-    AI_EMBEDDING_MODEL: str = "text-embedding-004"
+    AI_EMBEDDING_MODEL: str = "gemini-embedding-001"
     AI_EMBEDDING_DIMENSIONS: int = 768
     AI_TIMEOUT_SECONDS: float = 90.0
     RAG_MIN_RELEVANCE_SCORE: float = 0.42

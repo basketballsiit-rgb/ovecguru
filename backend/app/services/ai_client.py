@@ -96,6 +96,7 @@ async def create_embeddings(texts: List[str], batch_size: int = 32) -> List[List
     headers = _auth_headers(str(cfg["api_key"]))
     url = _build_url(str(cfg["api_base_url"]), "embeddings")
     model = str(cfg["embedding_model"])
+    target_dims = int(cfg["embedding_dimensions"])
     all_embeddings: List[List[float]] = []
 
     async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
@@ -105,6 +106,8 @@ async def create_embeddings(texts: List[str], batch_size: int = 32) -> List[List
                 "model": model,
                 "input": batch,
             }
+            if target_dims > 0:
+                payload["dimensions"] = target_dims
             try:
                 resp = await client.post(url, headers=headers, json=payload)
             except httpx.HTTPError as exc:

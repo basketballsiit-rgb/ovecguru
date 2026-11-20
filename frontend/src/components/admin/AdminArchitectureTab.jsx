@@ -31,7 +31,7 @@ const AI_PRESETS = [
     name: "Google Gemini",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
     chatModel: "gemini-2.5-flash",
-    embeddingModel: "text-embedding-004",
+    embeddingModel: "gemini-embedding-001",
   },
   {
     name: "OpenAI",
