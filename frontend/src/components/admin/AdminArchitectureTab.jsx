@@ -1,18 +1,51 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  AlertTriangle,
   CheckCircle2,
   Cloud,
   Cpu,
   Database,
+  Eye,
+  EyeOff,
   FileScan,
   HardDrive,
+  KeyRound,
   Layout,
+  Loader2,
+  PlugZap,
   RefreshCw,
+  Save,
   Server,
   ShieldCheck,
   XCircle,
 } from "lucide-react";
-import { fetchHealth } from "../../lib/api";
+import {
+  fetchAiConfigApi,
+  fetchHealth,
+  testAiConfigApi,
+  updateAiConfigApi,
+} from "../../lib/api";
+
+const AI_PRESETS = [
+  {
+    name: "Google Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    chatModel: "gemini-2.5-flash",
+    embeddingModel: "text-embedding-004",
+  },
+  {
+    name: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    chatModel: "gpt-4o-mini",
+    embeddingModel: "text-embedding-3-small",
+  },
+  {
+    name: "Typhoon (SCB 10X)",
+    baseUrl: "https://api.opentyphoon.ai/v1",
+    chatModel: "typhoon-v2.1-12b-instruct",
+    embeddingModel: "text-embedding-004",
+  },
+];
 
 const ARCH_COMPONENTS = [
   {
@@ -120,10 +153,25 @@ const BEST_PRACTICES = [
   },
 ];
 
-export default function AdminArchitectureTab() {
+export default function AdminArchitectureTab({ token, user }) {
+  const isSuperAdmin = user?.role === "super_admin";
+
   const [selectedId, setSelectedId] = useState("frontend");
   const [health, setHealth] = useState(null);
   const [loadingHealth, setLoadingHealth] = useState(true);
+
+  // Cloud AI API Config state (Super Admin)
+  const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [apiKeyMasked, setApiKeyMasked] = useState("");
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [chatModel, setChatModel] = useState("");
+  const [embeddingModel, setEmbeddingModel] = useState("");
+  const [minScore, setMinScore] = useState(0.42);
+  const [savingAi, setSavingAi] = useState(false);
+  const [testingAi, setTestingAi] = useState(false);
+  const [aiNotice, setAiNotice] = useState(null);
 
   const loadHealth = useCallback(async () => {
     setLoadingHealth(true);
@@ -137,9 +185,65 @@ export default function AdminArchitectureTab() {
     }
   }, []);
 
+  const loadAiConfig = useCallback(async () => {
+    if (!token || !isSuperAdmin) return;
+    try {
+      const cfg = await fetchAiConfigApi(token);
+      setApiBaseUrl(cfg.ai_api_base_url || "");
+      setApiKeyMasked(cfg.ai_api_key_masked || "");
+      setApiKeyConfigured(Boolean(cfg.ai_api_key_configured));
+      setChatModel(cfg.ai_chat_model || "");
+      setEmbeddingModel(cfg.ai_embedding_model || "");
+      setMinScore(cfg.rag_min_relevance_score ?? 0.42);
+    } catch {
+      // ignore if non-super-admin
+    }
+  }, [token, isSuperAdmin]);
+
   useEffect(() => {
     loadHealth();
-  }, [loadHealth]);
+    loadAiConfig();
+  }, [loadHealth, loadAiConfig]);
+
+  const handleSaveAiConfig = async (e) => {
+    e.preventDefault();
+    setSavingAi(true);
+    setAiNotice(null);
+    try {
+      const updated = await updateAiConfigApi(token, {
+        ai_api_base_url: apiBaseUrl.trim(),
+        ai_api_key: apiKeyInput.trim() || undefined,
+        ai_chat_model: chatModel.trim(),
+        ai_embedding_model: embeddingModel.trim(),
+        rag_min_relevance_score: Number(minScore),
+      });
+      setApiKeyInput("");
+      setApiKeyMasked(updated.ai_api_key_masked || "");
+      setApiKeyConfigured(Boolean(updated.ai_api_key_configured));
+      setAiNotice({
+        type: "success",
+        text: "บันทึกการตั้งค่า Cloud AI API ลงไฟล์ .env เรียบร้อยแล้ว และมีผลใช้งานทันทีทุก Worker!",
+      });
+      await loadHealth();
+    } catch (err) {
+      setAiNotice({ type: "error", text: err.message });
+    } finally {
+      setSavingAi(false);
+    }
+  };
+
+  const handleTestAiConfig = async () => {
+    setTestingAi(true);
+    setAiNotice(null);
+    try {
+      const res = await testAiConfigApi(token);
+      setAiNotice({ type: "success", text: res.message });
+    } catch (err) {
+      setAiNotice({ type: "error", text: err.message });
+    } finally {
+      setTestingAi(false);
+    }
+  };
 
   const selectedComp =
     ARCH_COMPONENTS.find((c) => c.id === selectedId) || ARCH_COMPONENTS[0];
@@ -204,6 +308,17 @@ export default function AdminArchitectureTab() {
             <div className="text-[11px] text-stone-600 truncate">
               Embed: {health?.ai_embedding_model || "-"}
             </div>
+            <div className="mt-1">
+              {health?.ai_api_key_configured ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                  <CheckCircle2 className="w-3 h-3" /> ตั้งค่า API Key แล้ว
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700">
+                  <AlertTriangle className="w-3 h-3" /> ยังไม่ได้ตั้งค่า API Key
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="rounded-xl border border-stone-200 bg-ovec-cream/60 p-3.5">
@@ -214,6 +329,170 @@ export default function AdminArchitectureTab() {
           </div>
         </div>
       </div>
+
+      {/* Cloud AI API Key & Model Configuration (Super Admin Only) */}
+      {isSuperAdmin && (
+        <div className="rounded-2xl bg-white border-2 border-amber-300/80 shadow-card overflow-hidden">
+          <div className="ovec-header-gradient px-5 py-3.5 text-white flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-amber-300" />
+              <h3 className="text-sm sm:text-base font-bold">
+                ตั้งค่า Cloud AI API Key (OpenAI-Compatible: Gemini / OpenAI / Typhoon)
+              </h3>
+            </div>
+            <span
+              className={`text-xs font-semibold px-3 py-1 rounded-full border ${
+                apiKeyConfigured
+                  ? "bg-emerald-500/20 border-emerald-300/50 text-emerald-100"
+                  : "bg-amber-400/20 border-amber-300/50 text-amber-100"
+              }`}
+            >
+              {apiKeyConfigured
+                ? `พร้อมใช้งาน (${apiKeyMasked})`
+                : "ยังไม่ได้ตั้งค่า AI_API_KEY"}
+            </span>
+          </div>
+
+          <form onSubmit={handleSaveAiConfig} className="p-5 space-y-4">
+            {aiNotice && (
+              <div
+                className={`rounded-xl px-4 py-2.5 text-xs sm:text-sm flex items-center gap-2 border ${
+                  aiNotice.type === "error"
+                    ? "bg-rose-50 border-rose-200 text-rose-900"
+                    : "bg-emerald-50 border-emerald-200 text-emerald-900"
+                }`}
+              >
+                {aiNotice.type === "error" ? (
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                )}
+                <span>{aiNotice.text}</span>
+              </div>
+            )}
+
+            {/* Quick Provider Presets */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-stone-600">เลือกค่าเริ่มต้นผู้ให้บริการ:</span>
+              {AI_PRESETS.map((preset) => (
+                <button
+                  key={preset.name}
+                  type="button"
+                  onClick={() => {
+                    setApiBaseUrl(preset.baseUrl);
+                    setChatModel(preset.chatModel);
+                    setEmbeddingModel(preset.embeddingModel);
+                  }}
+                  className="rounded-full border border-stone-300 bg-ovec-cream hover:border-ovec-maroon hover:text-ovec-maroon px-3 py-1 text-xs font-semibold text-stone-700 transition"
+                >
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  AI API Base URL *
+                </label>
+                <input
+                  type="url"
+                  required
+                  value={apiBaseUrl}
+                  onChange={(e) => setApiBaseUrl(e.target.value)}
+                  placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
+                  className="w-full rounded-xl border border-stone-300 px-3.5 py-2 text-xs sm:text-sm font-mono focus:border-ovec-maroon focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  AI API Key {apiKeyConfigured ? "(เว้นว่างหากใช้คีย์เดิม)" : "*"}
+                </label>
+                <div className="relative">
+                  <input
+                    type={showKey ? "text" : "password"}
+                    required={!apiKeyConfigured}
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder={
+                      apiKeyConfigured
+                        ? `คีย์ปัจจุบัน: ${apiKeyMasked} (กรอกใหม่เพื่อเปลี่ยน)`
+                        : "วาง API Key ของ Gemini / OpenAI / Typhoon ที่นี่..."
+                    }
+                    className="w-full rounded-xl border border-stone-300 pl-3.5 pr-10 py-2 text-xs sm:text-sm font-mono focus:border-ovec-maroon focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowKey((v) => !v)}
+                    className="absolute right-2.5 top-2 text-stone-400 hover:text-stone-700"
+                    title={showKey ? "ซ่อนคีย์" : "แสดงคีย์"}
+                  >
+                    {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  Chat LLM Model *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={chatModel}
+                  onChange={(e) => setChatModel(e.target.value)}
+                  placeholder="gemini-2.5-flash"
+                  className="w-full rounded-xl border border-stone-300 px-3.5 py-2 text-xs sm:text-sm font-mono focus:border-ovec-maroon focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  Embedding Model *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={embeddingModel}
+                  onChange={(e) => setEmbeddingModel(e.target.value)}
+                  placeholder="text-embedding-004"
+                  className="w-full rounded-xl border border-stone-300 px-3.5 py-2 text-xs sm:text-sm font-mono focus:border-ovec-maroon focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <button
+                type="submit"
+                disabled={savingAi}
+                className="inline-flex items-center gap-2 rounded-xl bg-ovec-maroon hover:bg-ovec-dark text-white px-4 py-2 text-xs sm:text-sm font-semibold shadow-sm transition disabled:opacity-60"
+              >
+                {savingAi ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4 text-amber-300" />
+                )}
+                บันทึกการตั้งค่าลง .env (มีผลทันที)
+              </button>
+
+              <button
+                type="button"
+                onClick={handleTestAiConfig}
+                disabled={testingAi || !apiKeyConfigured}
+                className="inline-flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 px-4 py-2 text-xs sm:text-sm font-semibold transition disabled:opacity-50"
+              >
+                {testingAi ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <PlugZap className="w-4 h-4 text-emerald-700" />
+                )}
+                ทดสอบการเชื่อมต่อ API
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Interactive 5-Component RAG Architecture Diagram */}
       <div className="rounded-2xl bg-white border border-stone-200 p-5 shadow-card space-y-4">

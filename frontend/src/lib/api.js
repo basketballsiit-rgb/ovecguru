@@ -260,6 +260,30 @@ export async function transferPrimarySuperApi(token, targetUserId) {
   return handleJsonResponse(res, "ไม่สามารถโอนย้ายตำแหน่ง Primary Super Admin ได้");
 }
 
+export async function fetchAiConfigApi(token) {
+  const res = await fetch(apiUrl("/api/admin/ai-config"), {
+    headers: authHeaders(token),
+  });
+  return handleJsonResponse(res, "ไม่สามารถโหลดค่าตั้งค่า Cloud AI API ได้");
+}
+
+export async function updateAiConfigApi(token, payload) {
+  const res = await fetch(apiUrl("/api/admin/ai-config"), {
+    method: "PUT",
+    headers: authHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify(payload),
+  });
+  return handleJsonResponse(res, "ไม่สามารถบันทึกค่าตั้งค่า Cloud AI API ได้");
+}
+
+export async function testAiConfigApi(token) {
+  const res = await fetch(apiUrl("/api/admin/ai-config/test"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  return handleJsonResponse(res, "ทดสอบเชื่อมต่อ Cloud AI API ไม่สำเร็จ");
+}
+
 // ==============================================================================
 // Chatbot SSE Streaming
 // ==============================================================================

@@ -259,7 +259,9 @@ export default function AdminConsole({
         />
       )}
 
-      {subTab === "architecture" && <AdminArchitectureTab />}
+      {subTab === "architecture" && (
+        <AdminArchitectureTab token={token} user={user} />
+      )}
     </div>
   );
 }

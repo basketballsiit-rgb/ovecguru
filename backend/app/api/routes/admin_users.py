@@ -1,16 +1,21 @@
 """Super Admin User Management (/api/admin/users) and Governance Policy (/api/admin/governance)."""
 
+from pathlib import Path
 from typing import Optional
 
+from dotenv import set_key
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_governance_policy, require_roles
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models import GovernancePolicy, User, UserRole, UserStatus
 from app.schemas.auth import (
+    AIConfigResponse,
+    AIConfigUpdateRequest,
     GovernancePolicyResponse,
     GovernancePolicyUpdate,
     TransferPrimarySuperRequest,
@@ -18,6 +23,13 @@ from app.schemas.auth import (
     UserListResponse,
     UserResponse,
     UserUpdateRequest,
+)
+from app.services.ai_client import (
+    AIClientError,
+    create_embeddings,
+    get_live_ai_config,
+    is_ai_configured,
+    mask_api_key,
 )
 
 router = APIRouter(tags=["Admin Users & Governance"])
@@ -258,3 +270,82 @@ def transfer_primary_super_admin(
     db.commit()
     db.refresh(target)
     return UserResponse.model_validate(target)
+
+
+# ==============================================================================
+# Cloud AI API Settings (/api/admin/ai-config) — Super Admin Only
+# ==============================================================================
+
+
+@router.get("/api/admin/ai-config", response_model=AIConfigResponse)
+def read_ai_config(_admin: User = Depends(super_admin_only)) -> AIConfigResponse:
+    """Return current Cloud AI API configuration (with masked API Key)."""
+    cfg = get_live_ai_config()
+    return AIConfigResponse(
+        ai_api_base_url=str(cfg["api_base_url"]),
+        ai_api_key_configured=is_ai_configured(),
+        ai_api_key_masked=mask_api_key(str(cfg["api_key"])),
+        ai_chat_model=str(cfg["chat_model"]),
+        ai_embedding_model=str(cfg["embedding_model"]),
+        ai_embedding_dimensions=int(cfg["embedding_dimensions"]),
+        rag_min_relevance_score=float(cfg["rag_min_relevance_score"]),
+    )
+
+
+@router.put("/api/admin/ai-config", response_model=AIConfigResponse)
+def update_ai_config(
+    payload: AIConfigUpdateRequest,
+    _admin: User = Depends(super_admin_only),
+) -> AIConfigResponse:
+    """Persist Cloud AI API settings to .env and apply immediately across all workers."""
+    cfg = get_live_ai_config()
+    env_path = Path(str(cfg["env_file_path"]))
+    if not env_path.exists():
+        env_path.touch()
+
+    base_url = payload.ai_api_base_url.strip()
+    chat_model = payload.ai_chat_model.strip()
+    embedding_model = payload.ai_embedding_model.strip()
+
+    set_key(str(env_path), "AI_API_BASE_URL", base_url)
+    set_key(str(env_path), "AI_CHAT_MODEL", chat_model)
+    set_key(str(env_path), "AI_EMBEDDING_MODEL", embedding_model)
+
+    settings.AI_API_BASE_URL = base_url
+    settings.AI_CHAT_MODEL = chat_model
+    settings.AI_EMBEDDING_MODEL = embedding_model
+
+    if payload.ai_api_key is not None and payload.ai_api_key.strip():
+        clean_key = payload.ai_api_key.strip()
+        set_key(str(env_path), "AI_API_KEY", clean_key)
+        settings.AI_API_KEY = clean_key
+
+    if payload.rag_min_relevance_score is not None:
+        set_key(str(env_path), "RAG_MIN_RELEVANCE_SCORE", str(payload.rag_min_relevance_score))
+        settings.RAG_MIN_RELEVANCE_SCORE = payload.rag_min_relevance_score
+
+    updated = get_live_ai_config()
+    return AIConfigResponse(
+        ai_api_base_url=str(updated["api_base_url"]),
+        ai_api_key_configured=is_ai_configured(),
+        ai_api_key_masked=mask_api_key(str(updated["api_key"])),
+        ai_chat_model=str(updated["chat_model"]),
+        ai_embedding_model=str(updated["embedding_model"]),
+        ai_embedding_dimensions=int(updated["embedding_dimensions"]),
+        rag_min_relevance_score=float(updated["rag_min_relevance_score"]),
+    )
+
+
+@router.post("/api/admin/ai-config/test")
+async def test_ai_config(_admin: User = Depends(super_admin_only)) -> dict:
+    """Test the configured Cloud AI API by requesting a single test embedding."""
+    try:
+        vectors = await create_embeddings(["ทดสอบการเชื่อมต่อ OVEC GURU Cloud AI API"])
+        dim = len(vectors[0]) if vectors else 0
+        return {
+            "ok": True,
+            "message": f"เชื่อมต่อ Cloud AI API สำเร็จ! (ขนาดเวกเตอร์ Embedding: {dim} มิติ)",
+            "vector_dimensions": dim,
+        }
+    except AIClientError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

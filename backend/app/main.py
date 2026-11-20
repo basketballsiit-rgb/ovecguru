@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.routes import admin_users, auth, categories, chat, documents
 from app.core.config import settings
 from app.db.session import get_db
+from app.services.ai_client import get_live_ai_config, is_ai_configured
 
 
 @asynccontextmanager
@@ -63,6 +64,8 @@ def health_check(db: Session = Depends(get_db)) -> dict:
 
     is_healthy = db_ok and (pgvector_ok if dialect == "postgresql" else True)
 
+    live_ai = get_live_ai_config()
+
     return {
         "status": "ok" if is_healthy else "degraded",
         "app_name": settings.APP_NAME,
@@ -70,8 +73,9 @@ def health_check(db: Session = Depends(get_db)) -> dict:
         "database_dialect": dialect,
         "database_connected": db_ok,
         "pgvector_enabled": pgvector_ok,
-        "ai_chat_model": settings.AI_CHAT_MODEL,
-        "ai_embedding_model": settings.AI_EMBEDDING_MODEL,
+        "ai_api_key_configured": is_ai_configured(),
+        "ai_chat_model": live_ai["chat_model"],
+        "ai_embedding_model": live_ai["embedding_model"],
         "upload_dir": settings.UPLOAD_DIR,
         "error": error_detail,
     }
