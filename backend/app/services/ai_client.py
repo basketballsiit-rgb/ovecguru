@@ -7,8 +7,9 @@ Strictly zero local PyTorch / AVX dependencies.
 
 import asyncio
 import json
+import time
 from pathlib import Path
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Optional
 
 import httpx
 from dotenv import dotenv_values
@@ -19,33 +20,58 @@ RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 FALLBACK_TRIGGER_CODES = {404, 429, 500, 502, 503, 504}
 MAX_AI_RETRIES = 2
 
+# In-memory TTL caches so subsequent questions skip slow/503 models & /models lookups
+_CACHE_TTL_SECONDS = 600.0
+_models_cache: Dict[str, object] = {"expires_at": 0.0, "base_url": "", "data": None}
+_working_model_cache: Dict[str, object] = {"expires_at": 0.0, "primary": "", "model": None}
+_shared_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Reuse a persistent HTTP/TLS connection pool to avoid ~500ms handshake overhead per query."""
+    global _shared_http_client
+    if _shared_http_client is None or _shared_http_client.is_closed:
+        _shared_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=10.0),
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _shared_http_client
+
 _NON_CHAT_KEYWORDS = ("embedding", "imagen", "veo", "aqa", "tts", "audio", "whisper", "dall-e", "moderation")
 
 
-async def list_available_models() -> Dict[str, List[str]]:
-    """Query OpenAI-compatible GET /models using the live API Key and group chat vs embedding models."""
+async def list_available_models(force_refresh: bool = False) -> Dict[str, List[str]]:
+    """Query OpenAI-compatible GET /models using the live API Key (cached 10 min)."""
     cfg = get_live_ai_config()
     base_url = str(cfg["api_base_url"])
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and _models_cache["data"] is not None
+        and _models_cache["base_url"] == base_url
+        and now < float(_models_cache["expires_at"])
+    ):
+        return _models_cache["data"]  # type: ignore[return-value]
+
     headers = _auth_headers(str(cfg["api_key"]))
     url = _build_url(base_url, "models")
+    client = _get_http_client()
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        try:
-            resp = await client.get(url, headers=headers)
-        except httpx.HTTPError as exc:
-            raise AIClientError(f"ไม่สามารถดึงรายชื่อโมเดลจาก API ได้: {exc}") from exc
+    try:
+        resp = await client.get(url, headers=headers, timeout=12.0)
+    except httpx.HTTPError as exc:
+        raise AIClientError(f"ไม่สามารถดึงรายชื่อโมเดลจาก API ได้: {exc}") from exc
 
-        if resp.status_code >= 400:
-            raise AIClientError(f"GET /models ตอบกลับสถานะ {resp.status_code}: {resp.text[:250]}")
+    if resp.status_code >= 400:
+        raise AIClientError(f"GET /models ตอบกลับสถานะ {resp.status_code}: {resp.text[:250]}")
 
-        data = resp.json()
+    data = resp.json()
 
     raw_ids: List[str] = []
     for item in data.get("data", []):
         mid = str(item.get("id") or "").strip()
         if not mid:
             continue
-        # Strip leading "models/" prefix if returned by Gemini OpenAI-compat endpoint
         if mid.startswith("models/"):
             mid = mid[7:]
         if mid not in raw_ids:
@@ -65,7 +91,11 @@ async def list_available_models() -> Dict[str, List[str]]:
         return (is_flash, is_lite, is_preview, low)
 
     chat_models.sort(key=_chat_rank)
-    return {"chat_models": chat_models, "embedding_models": embedding_models}
+    result = {"chat_models": chat_models, "embedding_models": embedding_models}
+    _models_cache["data"] = result
+    _models_cache["base_url"] = base_url
+    _models_cache["expires_at"] = now + _CACHE_TTL_SECONDS
+    return result
 
 
 class AIClientError(RuntimeError):
@@ -219,85 +249,106 @@ async def stream_chat_completion(
     temperature: float = 0.1,
 ) -> AsyncGenerator[str, None]:
     """Stream text deltas from an OpenAI-compatible /chat/completions endpoint
-    with automatic retry AND dynamic fallback across live models from GET /models on 503/429/404.
+    with pooled connections, fast working-model caching, and dynamic /models fallback.
     """
     cfg = get_live_ai_config()
     base_url = str(cfg["api_base_url"])
     headers = _auth_headers(str(cfg["api_key"]))
     url = _build_url(base_url, "chat/completions")
     primary_model = str(cfg["chat_model"])
-    model_chain: List[str] = [primary_model]
+
+    # If a fast working fallback model was recently verified for this primary, try it FIRST
+    now = time.monotonic()
+    cached_working = (
+        _working_model_cache["model"]
+        if (
+            _working_model_cache["model"]
+            and _working_model_cache["primary"] == primary_model
+            and now < float(_working_model_cache["expires_at"])
+        )
+        else None
+    )
+    model_chain: List[str] = [str(cached_working)] if cached_working else [primary_model]
+    if primary_model not in model_chain:
+        model_chain.append(primary_model)
+
     discovered_loaded = False
     last_error_msg = "ไม่สามารถเชื่อมต่อ Cloud LLM API ได้"
+    client = _get_http_client()
 
-    async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
-        model_idx = 0
-        while model_idx < len(model_chain):
-            model_name = model_chain[model_idx]
-            payload = {
-                "model": model_name,
-                "messages": messages,
-                "temperature": temperature,
-                "stream": True,
-            }
-            attempts_for_model = MAX_AI_RETRIES if model_idx == 0 else 1
+    model_idx = 0
+    while model_idx < len(model_chain):
+        model_name = model_chain[model_idx]
+        payload: Dict[str, object] = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": 1024,
+            "stream": True,
+        }
+        # Fail fast (15s read timeout) on congested/stalled models so fallback kicks in quickly
+        req_timeout = httpx.Timeout(connect=8.0, read=18.0, write=15.0, pool=8.0)
 
-            for attempt in range(1, attempts_for_model + 1):
-                yielded_any = False
-                try:
-                    async with client.stream("POST", url, headers=headers, json=payload) as resp:
-                        if resp.status_code in FALLBACK_TRIGGER_CODES:
-                            body = (await resp.aread()).decode("utf-8", errors="ignore")
-                            last_error_msg = (
-                                f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {resp.status_code}: {body[:260]}"
-                            )
-                            if resp.status_code in RETRYABLE_STATUS_CODES and attempt < attempts_for_model:
-                                await asyncio.sleep(1.0)
-                                continue
-                            # Dynamically discover live fallback models from GET /models on first failure
-                            if not discovered_loaded:
-                                discovered_loaded = True
-                                model_chain = await _build_chat_model_chain(primary_model)
-                            break
-
-                        if resp.status_code >= 400:
-                            body = (await resp.aread()).decode("utf-8", errors="ignore")
-                            raise AIClientError(
-                                f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {resp.status_code}: {body[:300]}"
-                            )
-
-                        async for raw_line in resp.aiter_lines():
-                            line = raw_line.strip()
-                            if not line or not line.startswith("data:"):
-                                continue
-                            data_str = line[5:].strip()
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                chunk = json.loads(data_str)
-                            except json.JSONDecodeError:
-                                continue
-                            choices = chunk.get("choices") or []
-                            if not choices:
-                                continue
-                            delta = choices[0].get("delta") or {}
-                            content = delta.get("content")
-                            if content:
-                                yielded_any = True
-                                yield content
-                        return
-                except httpx.HTTPError as exc:
-                    last_error_msg = f"เชื่อมต่อ Cloud LLM API ({model_name}) ไม่สำเร็จ: {exc}"
-                    if not yielded_any and attempt < attempts_for_model:
-                        await asyncio.sleep(1.0)
-                        continue
-                    if not yielded_any and not discovered_loaded:
+        yielded_any = False
+        try:
+            async with client.stream(
+                "POST", url, headers=headers, json=payload, timeout=req_timeout
+            ) as resp:
+                if resp.status_code in FALLBACK_TRIGGER_CODES:
+                    body = (await resp.aread()).decode("utf-8", errors="ignore")
+                    last_error_msg = (
+                        f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {resp.status_code}: {body[:240]}"
+                    )
+                    if not discovered_loaded:
                         discovered_loaded = True
-                        model_chain = await _build_chat_model_chain(primary_model)
-                    if not yielded_any:
-                        break
-                    raise AIClientError(last_error_msg) from exc
+                        discovered_chain = await _build_chat_model_chain(primary_model)
+                        for m in discovered_chain:
+                            if m not in model_chain:
+                                model_chain.append(m)
+                    model_idx += 1
+                    continue
 
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode("utf-8", errors="ignore")
+                    raise AIClientError(
+                        f"Cloud LLM API ({model_name}) ตอบกลับสถานะ {resp.status_code}: {body[:300]}"
+                    )
+
+                # Cache this responsive model for 10 minutes so next question streams immediately!
+                _working_model_cache["primary"] = primary_model
+                _working_model_cache["model"] = model_name
+                _working_model_cache["expires_at"] = time.monotonic() + _CACHE_TTL_SECONDS
+
+                async for raw_line in resp.aiter_lines():
+                    line = raw_line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yielded_any = True
+                        yield content
+                return
+        except httpx.HTTPError as exc:
+            last_error_msg = f"เชื่อมต่อ Cloud LLM API ({model_name}) ไม่สำเร็จหรือหมดเวลา: {exc}"
+            if yielded_any:
+                raise AIClientError(last_error_msg) from exc
+            if not discovered_loaded:
+                discovered_loaded = True
+                discovered_chain = await _build_chat_model_chain(primary_model)
+                for m in discovered_chain:
+                    if m not in model_chain:
+                        model_chain.append(m)
             model_idx += 1
 
     raise AIClientError(last_error_msg)

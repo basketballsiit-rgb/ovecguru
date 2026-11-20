@@ -354,28 +354,37 @@ def build_citation_cards(db: Session, matched_items: List[Dict[str, object]]) ->
     return cards
 
 
-def build_grounded_messages(question: str, matched_items: List[Dict[str, object]]) -> List[Dict[str, str]]:
-    """Build Strict Grounding chat messages from top matched chunks."""
+def build_grounded_messages(
+    question: str,
+    matched_items: List[Dict[str, object]],
+    max_context_chunks: int = 4,
+    max_context_chars: int = 3800,
+) -> List[Dict[str, str]]:
+    """Build concise Strict Grounding chat messages from top matched chunks for fast TTFT."""
     context_blocks = []
-    for idx, item in enumerate(matched_items, start=1):
+    used_chars = 0
+    for idx, item in enumerate(matched_items[:max_context_chunks], start=1):
         doc: Document = item["document"]
         chunk: DocumentChunk = item["chunk"]
         eff = doc.effective_date.isoformat() if doc.effective_date else "ไม่ระบุวันที่"
         cat_name = doc.category.name if doc.category else "-"
         heading = chunk.clause_heading or "เนื้อหาเอกสาร"
+        body = chunk.content_text.strip()
+        if used_chars + len(body) > max_context_chars and context_blocks:
+            remaining = max(300, max_context_chars - used_chars)
+            body = body[:remaining] + "..."
+        used_chars += len(body)
         context_blocks.append(
-            f"[เอกสารอ้างอิง #{idx}]\n"
-            f"ชื่อประกาศ/เอกสาร: {doc.title}\n"
-            f"หมวดหมู่: {cat_name} | วันที่บังคับใช้: {eff}\n"
-            f"หมวด/ข้อ: {heading}\n"
-            f"เนื้อหา:\n{chunk.content_text}"
+            f"[เอกสาร #{idx}] {doc.title} ({cat_name} | บังคับใช้: {eff} | {heading})\n{body}"
         )
+        if used_chars >= max_context_chars:
+            break
 
     user_prompt = (
-        "ข้อมูลเอกสารอ้างอิงอย่างเป็นทางการของ สอศ.:\n\n"
+        "ข้อมูลเอกสารอ้างอิง สอศ.:\n\n"
         + "\n\n---\n\n".join(context_blocks)
-        + f"\n\n---\n\nคำถามจากผู้ใช้งาน: {question}\n\n"
-        "กรุณาตอบคำถามโดยอ้างอิงจากเอกสารด้านบนเท่านั้น พร้อมระบุชื่อประกาศและหมวด/ข้อที่อ้างอิง"
+        + f"\n\n---\n\nคำถาม: {question}\n"
+        "ตอบอย่างกระชับ ชัดเจน จากเอกสารด้านบนเท่านั้น พร้อมระบุชื่อประกาศและหมวด/ข้อที่อ้างอิง"
     )
 
     return [
