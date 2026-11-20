@@ -11,7 +11,7 @@ from typing import Dict, Tuple
 
 from docx import Document as DocxDocument
 from fastapi import HTTPException, UploadFile, status
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 from pypdf import PdfReader
 
 from app.core.config import settings
@@ -55,6 +55,13 @@ def save_uploaded_file(upload_file: UploadFile) -> Tuple[str, Path, str]:
     return stored_filename, dest_path, ext
 
 
+def _preprocess_for_ocr(image: Image.Image) -> Image.Image:
+    """Enhance contrast and sharpness for crisp Thai vowels, Thai numerals, and mixed English."""
+    gray = image.convert("L")
+    enhanced = ImageOps.autocontrast(gray, cutoff=1)
+    return enhanced.filter(ImageFilter.SHARPEN)
+
+
 def _ocr_image(image: Image.Image) -> str:
     try:
         import pytesseract
@@ -66,12 +73,13 @@ def _ocr_image(image: Image.Image) -> str:
 
     # Prevent Tesseract OpenMP thread contention on multi-core Xeon CPUs
     os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+    processed = _preprocess_for_ocr(image)
     try:
-        # --oem 1 (fast LSTM) + --psm 6 (uniform block of text) is ~2x faster on Thai docs
+        # --oem 1 (LSTM) + --psm 6 (uniform block) + preserve_interword_spaces for Thai+English
         return pytesseract.image_to_string(
-            image,
+            processed,
             lang="tha+eng",
-            config="--oem 1 --psm 6",
+            config="--oem 1 --psm 6 -c preserve_interword_spaces=1",
         ).strip()
     except Exception as exc:
         raise HTTPException(
@@ -146,12 +154,12 @@ def _extract_from_pdf(file_path: Path, force_ocr: bool = False) -> Dict[str, obj
         ocr_pages = []
         with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR, prefix="ocr_") as tmp_dir:
             try:
-                # 150 DPI + grayscale + paths_only keeps RAM ultra-low and speeds up Xeon X3440 ~4-6x
+                # 220 DPI lossless PNG grayscale + 3 parallel workers balances speed and crisp Thai+English OCR
                 image_paths = convert_from_path(
                     str(file_path),
-                    dpi=150,
+                    dpi=220,
                     grayscale=True,
-                    fmt="jpeg",
+                    fmt="png",
                     thread_count=2,
                     output_folder=tmp_dir,
                     paths_only=True,
