@@ -5,6 +5,7 @@ Reads live .env values on demand so multi-worker Uvicorn picks up UI config upda
 Strictly zero local PyTorch / AVX dependencies.
 """
 
+import asyncio
 import json
 from pathlib import Path
 from typing import AsyncGenerator, Dict, List
@@ -13,6 +14,9 @@ import httpx
 from dotenv import dotenv_values
 
 from app.core.config import BACKEND_DIR, PROJECT_ROOT, settings
+
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+MAX_AI_RETRIES = 3
 
 
 class AIClientError(RuntimeError):
@@ -108,14 +112,28 @@ async def create_embeddings(texts: List[str], batch_size: int = 32) -> List[List
             }
             if target_dims > 0:
                 payload["dimensions"] = target_dims
-            try:
-                resp = await client.post(url, headers=headers, json=payload)
-            except httpx.HTTPError as exc:
-                raise AIClientError(f"เชื่อมต่อ Cloud Embedding API ไม่สำเร็จ: {exc}") from exc
+            resp = None
+            last_error = ""
+            for attempt in range(1, MAX_AI_RETRIES + 1):
+                try:
+                    resp = await client.post(url, headers=headers, json=payload)
+                except httpx.HTTPError as exc:
+                    last_error = f"เชื่อมต่อ Cloud Embedding API ไม่สำเร็จ: {exc}"
+                    if attempt < MAX_AI_RETRIES:
+                        await asyncio.sleep(1.5 * attempt)
+                        continue
+                    raise AIClientError(last_error) from exc
 
-            if resp.status_code >= 400:
+                if resp.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_AI_RETRIES:
+                    await asyncio.sleep(1.5 * attempt)
+                    continue
+                break
+
+            if resp is None or resp.status_code >= 400:
+                status_code = resp.status_code if resp is not None else "N/A"
+                body_preview = resp.text[:300] if resp is not None else last_error
                 raise AIClientError(
-                    f"Cloud Embedding API ตอบกลับสถานะ {resp.status_code}: {resp.text[:300]}"
+                    f"Cloud Embedding API ตอบกลับสถานะ {status_code}: {body_preview}"
                 )
 
             data = resp.json()
@@ -148,31 +166,43 @@ async def stream_chat_completion(
     }
 
     async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
-        try:
-            async with client.stream("POST", url, headers=headers, json=payload) as resp:
-                if resp.status_code >= 400:
-                    body = (await resp.aread()).decode("utf-8", errors="ignore")
-                    raise AIClientError(
-                        f"Cloud LLM API ตอบกลับสถานะ {resp.status_code}: {body[:300]}"
-                    )
+        for attempt in range(1, MAX_AI_RETRIES + 1):
+            yielded_any = False
+            try:
+                async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                    if resp.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_AI_RETRIES:
+                        await resp.aread()
+                        await asyncio.sleep(1.5 * attempt)
+                        continue
 
-                async for raw_line in resp.aiter_lines():
-                    line = raw_line.strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data_str = line[5:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        yield content
-        except httpx.HTTPError as exc:
-            raise AIClientError(f"เชื่อมต่อ Cloud LLM API ไม่สำเร็จ: {exc}") from exc
+                    if resp.status_code >= 400:
+                        body = (await resp.aread()).decode("utf-8", errors="ignore")
+                        raise AIClientError(
+                            f"Cloud LLM API ตอบกลับสถานะ {resp.status_code}: {body[:300]}"
+                        )
+
+                    async for raw_line in resp.aiter_lines():
+                        line = raw_line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            yielded_any = True
+                            yield content
+                    return
+            except httpx.HTTPError as exc:
+                if not yielded_any and attempt < MAX_AI_RETRIES:
+                    await asyncio.sleep(1.5 * attempt)
+                    continue
+                raise AIClientError(f"เชื่อมต่อ Cloud LLM API ไม่สำเร็จ: {exc}") from exc
