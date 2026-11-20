@@ -1,0 +1,38 @@
+# ==============================================================================
+# OVEC GURU - FastAPI Backend Systemd Unit (CentOS Stream 9)
+# Install:
+#   sudo cp /home/ovec_guru/deploy/ovec-guru-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ovec-guru-backend
+# ==============================================================================
+
+[Unit]
+Description=OVEC GURU FastAPI Backend Service (Uvicorn)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ovec_guru
+Group=ovec_guru
+WorkingDirectory=/home/ovec_guru/backend
+EnvironmentFile=/home/ovec_guru/.env
+
+# Keep ALL temporary files and caches strictly under /home/ovec_guru
+Environment="TMPDIR=/home/ovec_guru/tmp"
+Environment="TEMP=/home/ovec_guru/tmp"
+Environment="TMP=/home/ovec_guru/tmp"
+Environment="PIP_CACHE_DIR=/home/ovec_guru/pip_cache"
+Environment="XDG_CACHE_HOME=/home/ovec_guru/pip_cache"
+
+# 2 Uvicorn workers keep RAM footprint lean on a 3.6 GB free RAM server
+ExecStart=/home/ovec_guru/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+MemoryMax=768M
+
+StandardOutput=append:/home/ovec_guru/logs/backend.log
+StandardError=append:/home/ovec_guru/logs/backend_error.log
+
+[Install]
+WantedBy=multi-user.target

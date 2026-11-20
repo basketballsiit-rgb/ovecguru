@@ -1,0 +1,40 @@
+# ==============================================================================
+# OVEC GURU - Local PostgreSQL 16 + pgvector (Docker Compose)
+# Target Server: CentOS Stream 9 | Xeon X3440 (No AVX) | ~3.6 GB free RAM
+# Storage Policy: Data volume strictly mounted to /home/ovec_guru/pgdata
+#
+# Usage:
+#   docker compose --env-file /home/ovec_guru/.env -f /home/ovec_guru/deploy/docker-compose.db.yml up -d
+# ==============================================================================
+
+services:
+  ovec_guru_db:
+    image: pgvector/pgvector:pg16
+    container_name: ovec_guru_postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ovec_guru}
+      POSTGRES_USER: ${POSTGRES_USER:-ovec_guru}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_STRONG_PASSWORD}
+    volumes:
+      - /home/ovec_guru/pgdata:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=128MB"
+      - "-c"
+      - "effective_cache_size=384MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "max_connections=40"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ovec_guru} -d ${POSTGRES_DB:-ovec_guru}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

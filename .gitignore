@@ -1,0 +1,33 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+yarn-debug.log*
+
+# Local runtime storage (production uses /home/ovec_guru)
+uploads/
+tmp/
+cache/
+logs/
+*.db
+*.sqlite3
+
+# OS & Editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
