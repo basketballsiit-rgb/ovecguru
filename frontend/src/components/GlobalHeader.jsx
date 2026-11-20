@@ -28,12 +28,12 @@ export default function GlobalHeader({
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Left: Circular Gold-Trimmed OVEC Emblem + Brand Name */}
           <div className="flex items-center gap-3 min-w-0">
-            <div className="relative shrink-0 w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white p-1 ring-2 ring-amber-400 shadow-md flex items-center justify-center overflow-hidden">
+            <div className="relative shrink-0 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-white p-0.5 ring-2 ring-amber-400 shadow-md flex items-center justify-center overflow-hidden">
               <img
                 src={logoSrc}
                 onError={handleLogoError}
                 alt="ตราสัญลักษณ์สำนักงานคณะกรรมการการอาชีวศึกษา (สอศ.)"
-                className="w-full h-full object-contain rounded-full"
+                className="w-full h-full object-cover rounded-full"
               />
             </div>
 
