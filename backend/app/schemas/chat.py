@@ -7,6 +7,7 @@ class ChatStreamRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=2000)
     category_id: Optional[int] = None
     group_id: Optional[int] = None
+    document_id: Optional[int] = None
     top_k: int = Field(default=5, ge=1, le=12)
 
 

@@ -166,6 +166,8 @@ export default function ChatInterface({ categories = [], categoriesLoading = fal
         traceStage: "กำลังสืบค้น Hybrid Search (Vector + Keyword + เอกสารบังคับใช้ล่าสุด)...",
         metadata: null,
         error: null,
+        selectedCitationDocId: null,
+        perDocAnswers: {},
       },
     ]);
 
@@ -251,6 +253,118 @@ export default function ChatInterface({ categories = [], categoriesLoading = fal
 
   const handleStopStreaming = () => {
     abortControllerRef.current?.abort();
+  };
+
+  const handleSelectCitationAnswer = async (msg, citation) => {
+    // Clicking "ดูสรุปรวมทุกเอกสาร" (citation === null) returns to combined answer immediately
+    if (!citation) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msg.id ? { ...m, selectedCitationDocId: null } : m
+        )
+      );
+      return;
+    }
+
+    const docId = citation.document_id;
+    const existing = msg.perDocAnswers?.[docId];
+
+    // Switch active tab immediately
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msg.id ? { ...m, selectedCitationDocId: docId } : m
+      )
+    );
+
+    // If already fetched/cached (or currently streaming), no need to re-fetch
+    if (existing && (existing.content || existing.streaming)) {
+      return;
+    }
+
+    // Initialize streaming slot for this specific document
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msg.id
+          ? {
+              ...m,
+              perDocAnswers: {
+                ...(m.perDocAnswers || {}),
+                [docId]: { content: "", streaming: true, error: null },
+              },
+            }
+          : m
+      )
+    );
+
+    try {
+      await streamChatApi({
+        question: msg.question,
+        documentId: docId,
+        onToken: (deltaText) => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== msg.id) return m;
+              const current = m.perDocAnswers?.[docId] || { content: "", streaming: true, error: null };
+              return {
+                ...m,
+                perDocAnswers: {
+                  ...(m.perDocAnswers || {}),
+                  [docId]: { ...current, content: current.content + deltaText },
+                },
+              };
+            })
+          );
+        },
+        onError: (errMsg) => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== msg.id) return m;
+              const current = m.perDocAnswers?.[docId] || { content: "", streaming: false, error: null };
+              return {
+                ...m,
+                perDocAnswers: {
+                  ...(m.perDocAnswers || {}),
+                  [docId]: { ...current, streaming: false, error: errMsg },
+                },
+              };
+            })
+          );
+        },
+        onDone: () => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== msg.id) return m;
+              const current = m.perDocAnswers?.[docId] || { content: "", streaming: false, error: null };
+              return {
+                ...m,
+                perDocAnswers: {
+                  ...(m.perDocAnswers || {}),
+                  [docId]: { ...current, streaming: false },
+                },
+              };
+            })
+          );
+        },
+      });
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msg.id) return m;
+          const current = m.perDocAnswers?.[docId] || { content: "", streaming: false, error: null };
+          return {
+            ...m,
+            perDocAnswers: {
+              ...(m.perDocAnswers || {}),
+              [docId]: {
+                ...current,
+                streaming: false,
+                error: err.message || "ไม่สามารถดึงคำตอบจากเอกสารฉบับนี้ได้",
+              },
+            },
+          };
+        })
+      );
+    }
   };
 
   return (
@@ -384,6 +498,15 @@ export default function ChatInterface({ categories = [], categoriesLoading = fal
 
                 const meta = msg.metadata;
                 const isGap = meta && meta.grounded === false;
+                const selectedDocId = msg.selectedCitationDocId ?? null;
+                const selectedCitationObj =
+                  selectedDocId !== null
+                    ? meta?.citations?.find((c) => c.document_id === selectedDocId)
+                    : null;
+                const activeView =
+                  selectedDocId !== null && msg.perDocAnswers?.[selectedDocId]
+                    ? msg.perDocAnswers[selectedDocId]
+                    : { content: msg.content, streaming: msg.streaming, error: msg.error };
 
                 return (
                   <div key={msg.id} className="flex items-start gap-3">
@@ -395,7 +518,7 @@ export default function ChatInterface({ categories = [], categoriesLoading = fal
                       {/* RAG Trace Pill */}
                       {msg.traceStage && (
                         <div className="inline-flex items-center gap-2 rounded-xl bg-white border border-stone-200 px-3 py-1.5 text-xs text-stone-600 shadow-sm">
-                          {msg.streaming ? (
+                          {activeView.streaming ? (
                             <Loader2 className="w-3.5 h-3.5 text-ovec-maroon animate-spin shrink-0" />
                           ) : (
                             <SearchCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
@@ -421,32 +544,50 @@ export default function ChatInterface({ categories = [], categoriesLoading = fal
 
                       {/* Assistant Answer Bubble */}
                       <div className="rounded-2xl rounded-tl-sm bg-white border border-stone-200/90 px-4 sm:px-5 py-4 shadow-card">
-                        {msg.content ? (
+                        {selectedCitationObj && (
+                          <div className="mb-3 pb-2.5 border-b border-stone-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <span className="font-semibold text-ovec-maroon">
+                              กำลังแสดงคำตอบเฉพาะจากเอกสาร: {selectedCitationObj.title}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectCitationAnswer(msg, null)}
+                              className="text-xs font-semibold text-stone-600 hover:text-ovec-maroon underline"
+                            >
+                              กลับไปดูสรุปรวมทุกเอกสาร
+                            </button>
+                          </div>
+                        )}
+
+                        {activeView.content ? (
                           <FormattedAnswer
-                            content={msg.content}
-                            streaming={msg.streaming}
+                            content={activeView.content}
+                            streaming={activeView.streaming}
                           />
-                        ) : msg.streaming ? (
+                        ) : activeView.streaming ? (
                           <div className="flex items-center gap-2 text-sm text-stone-500">
                             <Loader2 className="w-4 h-4 animate-spin text-ovec-maroon" />
-                            กำลังประมวลผลและเรียบเรียงคำตอบ...
+                            {selectedCitationObj
+                              ? `กำลังสรุปคำตอบเฉพาะจาก "${selectedCitationObj.title}"...`
+                              : "กำลังประมวลผลและเรียบเรียงคำตอบ..."}
                           </div>
                         ) : null}
 
-                        {msg.error && (
+                        {activeView.error && (
                           <div className="mt-3 rounded-xl bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-800">
-                            {msg.error}
+                            {activeView.error}
                           </div>
                         )}
                       </div>
 
-                      {/* Verified Citation & Date Section (Primary Card + Compact Collapsible List) */}
+                      {/* Uniform Compact 2-Column Citation Cards */}
                       {meta?.citations?.length > 0 && (
                         <CitationsSection
                           citations={meta.citations}
                           question={msg.question}
-                          answer={msg.content}
-                          activeSourceId={activeSource?.document_id}
+                          displayedAnswer={activeView.content}
+                          selectedDocId={selectedDocId}
+                          onSelectDocAnswer={(cit) => handleSelectCitationAnswer(msg, cit)}
                           onOpenSource={(cit) => setActiveSource(cit)}
                         />
                       )}

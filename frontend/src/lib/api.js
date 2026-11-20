@@ -321,6 +321,7 @@ export async function testAiConfigApi(token) {
 export async function streamChatApi({
   question,
   categoryId = null,
+  documentId = null,
   topK = 5,
   signal,
   onMetadata,
@@ -334,6 +335,7 @@ export async function streamChatApi({
     body: JSON.stringify({
       question,
       category_id: categoryId,
+      document_id: documentId,
       top_k: topK,
     }),
     signal,

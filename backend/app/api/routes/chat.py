@@ -55,6 +55,7 @@ async def chat_stream(
         question=payload.question,
         category_id=payload.category_id,
         group_id=payload.group_id,
+        document_id=payload.document_id,
         top_k=payload.top_k,
     )
 
@@ -66,12 +67,16 @@ async def chat_stream(
     top_vec = float(top_item.get("vector_score", 0.0)) if top_item else 0.0
     top_kw = float(top_item.get("keyword_score", 0.0)) if top_item else 0.0
 
-    # Strict Grounding Gate: require combined score >= threshold AND either strong vector match or keyword overlap
-    is_grounded = (
-        top_item is not None
-        and top_score >= min_threshold
-        and (top_vec >= 0.72 or top_kw >= 0.15)
-    )
+    # When user explicitly clicks a specific citation document_id, always answer from that document
+    if payload.document_id is not None:
+        is_grounded = top_item is not None
+    else:
+        # Strict Grounding Gate: require combined score >= threshold AND either strong vector match or keyword overlap
+        is_grounded = (
+            top_item is not None
+            and top_score >= min_threshold
+            and (top_vec >= 0.72 or top_kw >= 0.15)
+        )
 
     if not is_grounded:
         suggested_cat = None
