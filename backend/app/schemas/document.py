@@ -43,7 +43,8 @@ class ChunkCommitItem(BaseModel):
 
 class DocumentCommitRequest(BaseModel):
     title: str = Field(..., min_length=2, max_length=500)
-    category_id: int
+    category_id: Optional[int] = None
+    group_id: Optional[int] = None
     effective_date: Optional[date] = None
     ingestion_type: str = Field(default="pdf_text", max_length=32)
     file_path: str = Field(..., min_length=1, max_length=1024)
@@ -59,6 +60,7 @@ class DocumentStatusUpdateRequest(BaseModel):
 class DocumentUpdateRequest(BaseModel):
     title: Optional[str] = Field(default=None, min_length=2, max_length=500)
     category_id: Optional[int] = None
+    group_id: Optional[int] = None
     effective_date: Optional[date] = None
     status: Optional[DocumentStatus] = None
 

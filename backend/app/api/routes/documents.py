@@ -23,6 +23,7 @@ from app.models import (
     Document,
     DocumentCategory,
     DocumentChunk,
+    DocumentGroup,
     DocumentStatus,
     GovernancePolicy,
     KnowledgeGap,
@@ -82,6 +83,48 @@ def _to_document_response(
         created_at=doc.created_at,
         chunk_count=chunk_count,
         embedded_chunk_count=embedded_chunk_count,
+    )
+
+
+def _resolve_target_category(
+    db: Session,
+    category_id: Optional[int],
+    group_id: Optional[int],
+) -> DocumentCategory:
+    """Resolve category_id, or auto-create a matching default category when only group_id is chosen."""
+    if category_id is not None:
+        cat = db.scalar(
+            select(DocumentCategory)
+            .options(joinedload(DocumentCategory.group))
+            .where(DocumentCategory.id == category_id)
+        )
+        if cat is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบหมวดหมู่เอกสารที่เลือก")
+        return cat
+
+    if group_id is not None:
+        grp = db.get(DocumentGroup, group_id)
+        if grp is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบกลุ่มประเภทเอกสารหลักที่เลือก")
+
+        existing_cat = db.scalar(
+            select(DocumentCategory)
+            .options(joinedload(DocumentCategory.group))
+            .where(DocumentCategory.group_id == group_id)
+            .order_by(DocumentCategory.is_default.desc(), DocumentCategory.id.asc())
+        )
+        if existing_cat is not None:
+            return existing_cat
+
+        new_cat = DocumentCategory(name=grp.name, group_id=grp.id, is_default=True)
+        db.add(new_cat)
+        db.flush()
+        new_cat.group = grp
+        return new_cat
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="กรุณาเลือกหมวดหมู่หรือกลุ่มประเภทเอกสารหลัก",
     )
 
 
@@ -172,13 +215,7 @@ async def commit_document_incremental(
     """
     ensure_can_commit_document(current_user, policy, payload.ingestion_type)
 
-    category = db.scalar(
-        select(DocumentCategory)
-        .options(joinedload(DocumentCategory.group))
-        .where(DocumentCategory.id == payload.category_id)
-    )
-    if category is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบหมวดหมู่เอกสารที่เลือก")
+    category = _resolve_target_category(db, payload.category_id, payload.group_id)
 
     # Validate file_path unless manual entry without physical file
     if payload.ingestion_type != "manual":
@@ -249,7 +286,7 @@ async def commit_document_incremental(
 
     new_doc = Document(
         title=payload.title.strip(),
-        category_id=payload.category_id,
+        category_id=category.id,
         effective_date=payload.effective_date,
         ingestion_type=payload.ingestion_type,
         file_path=payload.file_path,
@@ -389,15 +426,9 @@ def update_document_metadata(
         ensure_can_archive_document(current_user, policy)
         doc.status = payload.status
 
-    if payload.category_id is not None:
-        cat = db.scalar(
-            select(DocumentCategory)
-            .options(joinedload(DocumentCategory.group))
-            .where(DocumentCategory.id == payload.category_id)
-        )
-        if cat is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบหมวดหมู่เอกสารที่เลือก")
-        doc.category_id = payload.category_id
+    if payload.category_id is not None or payload.group_id is not None:
+        cat = _resolve_target_category(db, payload.category_id, payload.group_id)
+        doc.category_id = cat.id
         doc.category = cat
 
     if payload.title is not None:

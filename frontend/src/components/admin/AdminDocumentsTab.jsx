@@ -254,10 +254,15 @@ export default function AdminDocumentsTab({
 
     setCommitting(true);
     setNotice(null);
+    const isDirectGroup = String(categoryId).startsWith("group:");
+    const parsedGroupId = isDirectGroup ? Number(String(categoryId).slice(6)) : null;
+    const parsedCategoryId = isDirectGroup ? null : Number(categoryId);
+
     try {
       const res = await commitDocumentApi(token, {
         title: title.trim(),
-        category_id: Number(categoryId),
+        category_id: parsedCategoryId,
+        group_id: parsedGroupId,
         effective_date: effectiveDate || null,
         ingestion_type: ingestionType,
         file_path: filePath || "manual://draft",
@@ -348,10 +353,15 @@ export default function AdminDocumentsTab({
     if (!editingDoc || !editTitle.trim() || !editCategoryId) return;
     setSavingEdit(true);
     setNotice(null);
+    const isDirectGroup = String(editCategoryId).startsWith("group:");
+    const parsedGroupId = isDirectGroup ? Number(String(editCategoryId).slice(6)) : null;
+    const parsedCategoryId = isDirectGroup ? null : Number(editCategoryId);
+
     try {
       const updated = await updateDocumentApi(token, editingDoc.id, {
         title: editTitle.trim(),
-        category_id: Number(editCategoryId),
+        category_id: parsedCategoryId,
+        group_id: parsedGroupId,
         effective_date: editEffectiveDate || null,
       });
       setEditingDoc(null);
@@ -707,11 +717,17 @@ export default function AdminDocumentsTab({
                     <option value="">-- เลือกหมวดหมู่ --</option>
                     {groups.map((grp) => (
                       <optgroup key={grp.id} label={grp.name}>
-                        {(grp.categories || []).map((cat) => (
-                          <option key={cat.id} value={cat.id}>
-                            {cat.name}
+                        {(grp.categories || []).length > 0 ? (
+                          grp.categories.map((cat) => (
+                            <option key={cat.id} value={cat.id}>
+                              {cat.name}
+                            </option>
+                          ))
+                        ) : (
+                          <option value={`group:${grp.id}`}>
+                            {grp.name} (ใช้กลุ่มหลักนี้โดยตรง)
                           </option>
-                        ))}
+                        )}
                       </optgroup>
                     ))}
                   </select>
@@ -1051,11 +1067,17 @@ export default function AdminDocumentsTab({
                   >
                     {groups.map((grp) => (
                       <optgroup key={grp.id} label={grp.name}>
-                        {(grp.categories || []).map((cat) => (
-                          <option key={cat.id} value={cat.id}>
-                            {cat.name}
+                        {(grp.categories || []).length > 0 ? (
+                          grp.categories.map((cat) => (
+                            <option key={cat.id} value={cat.id}>
+                              {cat.name}
+                            </option>
+                          ))
+                        ) : (
+                          <option value={`group:${grp.id}`}>
+                            {grp.name} (ใช้กลุ่มหลักนี้โดยตรง)
                           </option>
-                        ))}
+                        )}
                       </optgroup>
                     ))}
                   </select>
