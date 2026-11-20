@@ -46,7 +46,11 @@ from app.schemas.document import (
     KnowledgeGapResponse,
     KnowledgeGapUpdateRequest,
 )
-from app.services.ai_client import AIClientError, create_embeddings, is_ai_configured
+from app.services.ai_client import (
+    AIClientError,
+    create_embeddings_resumable,
+    is_ai_configured,
+)
 from app.services.chunker import chunk_thai_official_text
 from app.services.ocr import extract_document_text, save_uploaded_file
 
@@ -271,9 +275,11 @@ async def commit_document_incremental(
 
     if is_ai_configured():
         try:
-            vectors = await create_embeddings(texts_to_embed)
-            embeddings = [v for v in vectors]
-            embedded_count = len(vectors)
+            vectors, partial_warning = await create_embeddings_resumable(texts_to_embed)
+            embeddings = vectors
+            embedded_count = sum(1 for v in vectors if v is not None)
+            if partial_warning:
+                embedding_warning = partial_warning
         except AIClientError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -461,7 +467,7 @@ async def reembed_document_chunks(
     db: Session = Depends(get_db),
     _user: User = Depends(admin_or_knowledge),
 ) -> DocumentResponse:
-    """Re-generate vector embeddings via Cloud Embedding API for all chunks of a document."""
+    """Resume embedding missing chunks (or re-embed all chunks if already complete)."""
     doc = db.scalar(
         select(Document)
         .options(
@@ -475,23 +481,39 @@ async def reembed_document_chunks(
     if not doc.chunks:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="เอกสารนี้ไม่มี Chunk สำหรับสร้างเวกเตอร์")
 
+    # Smart resume: if some chunks are still missing embeddings, ONLY embed those missing ones!
+    missing_chunks = [c for c in doc.chunks if c.embedding is None]
+    target_chunks = missing_chunks if missing_chunks else list(doc.chunks)
+
     texts = [
         f"{doc.title}\n{c.clause_heading or ''}\n{c.content_text}".strip()
-        for c in doc.chunks
+        for c in target_chunks
     ]
     try:
-        vectors = await create_embeddings(texts)
+        vectors, warning = await create_embeddings_resumable(texts)
     except AIClientError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"ไม่สามารถสร้างเวกเตอร์ใหม่ผ่าน Cloud Embedding API ได้: {exc}",
         )
 
-    for chunk, vec in zip(doc.chunks, vectors):
-        chunk.embedding = vec
+    newly_embedded = 0
+    for chunk, vec in zip(target_chunks, vectors):
+        if vec is not None:
+            chunk.embedding = vec
+            newly_embedded += 1
 
     db.commit()
-    return _to_document_response(doc, chunk_count=len(doc.chunks), embedded_chunk_count=len(vectors))
+
+    total_embedded = sum(1 for c in doc.chunks if c.embedding is not None)
+    if warning and newly_embedded == 0:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=warning)
+
+    return _to_document_response(
+        doc,
+        chunk_count=len(doc.chunks),
+        embedded_chunk_count=total_embedded,
+    )
 
 
 @router.delete("/api/documents/{document_id}", status_code=status.HTTP_200_OK)

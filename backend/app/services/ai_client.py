@@ -170,63 +170,98 @@ def _auth_headers(api_key: str) -> Dict[str, str]:
     }
 
 
-async def create_embeddings(texts: List[str], batch_size: int = 32) -> List[List[float]]:
-    """Generate vector embeddings via OpenAI-compatible /embeddings endpoint."""
+async def create_embeddings_resumable(
+    texts: List[str],
+    batch_size: int = 50,
+    throttle_seconds: float = 1.2,
+) -> tuple:
+    """Generate vector embeddings with batch throttling and graceful partial-save on 429 quota limits.
+
+    Returns:
+        (vectors: List[Optional[List[float]]], warning: Optional[str])
+    """
     if not texts:
-        return []
+        return [], None
 
     cfg = get_live_ai_config()
     headers = _auth_headers(str(cfg["api_key"]))
     url = _build_url(str(cfg["api_base_url"]), "embeddings")
     model = str(cfg["embedding_model"])
     target_dims = int(cfg["embedding_dimensions"])
-    all_embeddings: List[List[float]] = []
 
-    async with httpx.AsyncClient(timeout=settings.AI_TIMEOUT_SECONDS) as client:
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            payload = {
-                "model": model,
-                "input": batch,
-            }
-            if target_dims > 0:
-                payload["dimensions"] = target_dims
-            resp = None
-            last_error = ""
-            for attempt in range(1, MAX_AI_RETRIES + 1):
-                try:
-                    resp = await client.post(url, headers=headers, json=payload)
-                except httpx.HTTPError as exc:
-                    last_error = f"เชื่อมต่อ Cloud Embedding API ไม่สำเร็จ: {exc}"
-                    if attempt < MAX_AI_RETRIES:
-                        await asyncio.sleep(1.5 * attempt)
-                        continue
-                    raise AIClientError(last_error) from exc
+    results: List[Optional[List[float]]] = [None] * len(texts)
+    client = _get_http_client()
+    total_batches = (len(texts) + batch_size - 1) // batch_size
 
-                if resp.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_AI_RETRIES:
-                    await asyncio.sleep(1.5 * attempt)
+    for batch_idx, start in enumerate(range(0, len(texts), batch_size)):
+        if batch_idx > 0 and throttle_seconds > 0:
+            await asyncio.sleep(throttle_seconds)
+
+        batch = texts[start : start + batch_size]
+        payload: Dict[str, object] = {
+            "model": model,
+            "input": batch,
+        }
+        if target_dims > 0:
+            payload["dimensions"] = target_dims
+
+        resp = None
+        last_error = ""
+        for attempt in range(1, 4):
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
+            except httpx.HTTPError as exc:
+                last_error = f"เชื่อมต่อ Cloud Embedding API ไม่สำเร็จ: {exc}"
+                if attempt < 3:
+                    await asyncio.sleep(2.0 * attempt)
                     continue
+                resp = None
                 break
 
-            if resp is None or resp.status_code >= 400:
-                status_code = resp.status_code if resp is not None else "N/A"
-                body_preview = resp.text[:300] if resp is not None else last_error
-                raise AIClientError(
-                    f"Cloud Embedding API ตอบกลับสถานะ {status_code}: {body_preview}"
+            if resp.status_code == 429 and attempt < 3:
+                await asyncio.sleep(5.0 * attempt)
+                continue
+            if resp.status_code in RETRYABLE_STATUS_CODES and attempt < 3:
+                await asyncio.sleep(1.5 * attempt)
+                continue
+            break
+
+        if resp is None or resp.status_code >= 400:
+            status_code = resp.status_code if resp is not None else "N/A"
+            body_preview = resp.text[:220] if resp is not None else last_error
+            done_count = sum(1 for v in results if v is not None)
+            if resp is not None and resp.status_code == 429:
+                warning = (
+                    f"ติดขีดจำกัดโควตา Cloud Embedding API (429) หลังสร้างเวกเตอร์ได้ {done_count}/{len(texts)} Chunks "
+                    f"(Batch {batch_idx + 1}/{total_batches}) — ระบบบันทึกข้อความทั้งหมดไว้แล้ว สามารถรอ 1–2 นาทีแล้วกด 'ดู' → 'สร้างเวกเตอร์ใหม่ (Re-embed)' เพื่อสร้างเฉพาะส่วนที่เหลือต่อได้ทันที"
                 )
+                return results, warning
+            raise AIClientError(
+                f"Cloud Embedding API ตอบกลับสถานะ {status_code}: {body_preview}"
+            )
 
-            data = resp.json()
-            items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
-            if len(items) != len(batch):
-                raise AIClientError("จำนวนเวกเตอร์ที่ได้รับจาก Cloud Embedding API ไม่ตรงกับจำนวน Chunk")
+        data = resp.json()
+        items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+        if len(items) != len(batch):
+            raise AIClientError("จำนวนเวกเตอร์ที่ได้รับจาก Cloud Embedding API ไม่ตรงกับจำนวน Chunk")
 
-            for item in items:
-                vec = item.get("embedding")
-                if not isinstance(vec, list) or not vec:
-                    raise AIClientError("รูปแบบเวกเตอร์จาก Cloud Embedding API ไม่ถูกต้อง")
-                all_embeddings.append([float(v) for v in vec])
+        for offset, item in enumerate(items):
+            vec = item.get("embedding")
+            if not isinstance(vec, list) or not vec:
+                raise AIClientError("รูปแบบเวกเตอร์จาก Cloud Embedding API ไม่ถูกต้อง")
+            results[start + offset] = [float(v) for v in vec]
 
-    return all_embeddings
+    return results, None
+
+
+async def create_embeddings(texts: List[str], batch_size: int = 50) -> List[List[float]]:
+    """Strict wrapper returning all embeddings or raising AIClientError if any failed."""
+    vectors, warning = await create_embeddings_resumable(
+        texts, batch_size=batch_size, throttle_seconds=0.8
+    )
+    if warning or any(v is None for v in vectors):
+        raise AIClientError(warning or "ไม่สามารถสร้างเวกเตอร์ได้ครบทุก Chunk")
+    return [v for v in vectors if v is not None]
 
 
 async def _build_chat_model_chain(primary_model: str) -> List[str]:
