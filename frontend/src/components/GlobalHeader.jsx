@@ -10,11 +10,13 @@ export default function GlobalHeader({
   onDecreaseFont,
   onIncreaseFont,
 }) {
-  const [logoSrc, setLogoSrc] = useState("/assets/ovec-logo.png");
+  const baseUrl = import.meta.env.BASE_URL || "/";
+  const [logoSrc, setLogoSrc] = useState(`${baseUrl}assets/ovec-logo.png`);
 
   const handleLogoError = () => {
-    if (logoSrc !== "/assets/ovec-logo.svg") {
-      setLogoSrc("/assets/ovec-logo.svg");
+    const fallback = `${baseUrl}assets/ovec-logo.svg`;
+    if (logoSrc !== fallback) {
+      setLogoSrc(fallback);
     }
   };
 

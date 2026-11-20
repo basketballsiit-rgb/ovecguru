@@ -8,6 +8,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { apiUrl } from "../lib/api";
 import { formatThaiDate } from "../lib/format";
 
 export default function SourceViewer({ citation, onClose }) {
@@ -83,7 +84,7 @@ export default function SourceViewer({ citation, onClose }) {
 
           <div className="pt-1">
             <a
-              href={citation.file_url}
+              href={apiUrl(citation.file_url)}
               target="_blank"
               rel="noopener noreferrer"
               className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-ovec-maroon hover:bg-ovec-dark text-white px-4 py-2 text-xs font-semibold shadow-sm transition"

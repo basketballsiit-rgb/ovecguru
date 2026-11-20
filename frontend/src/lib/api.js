@@ -1,6 +1,22 @@
 /**
  * Complete API client for OVEC GURU Backend (FastAPI + SSE Streaming + RAG Console).
+ * Automatically supports subpath deployments (e.g. https://service.npc.ac.th/ovec_guru/).
  */
+
+const API_BASE = (
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.BASE_URL && import.meta.env.BASE_URL !== "/"
+    ? import.meta.env.BASE_URL.replace(/\/$/, "")
+    : "")
+).replace(/\/$/, "");
+
+export function apiUrl(path) {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  if (API_BASE && normalized.startsWith(`${API_BASE}/`)) return normalized;
+  return `${API_BASE}${normalized}`;
+}
 
 function authHeaders(token, extra = {}) {
   return {
@@ -25,18 +41,18 @@ async function handleJsonResponse(res, fallbackMessage) {
 // ==============================================================================
 
 export async function fetchHealth() {
-  const res = await fetch("/api/health");
+  const res = await fetch(apiUrl("/api/health"));
   return handleJsonResponse(res, "ไม่สามารถเชื่อมต่อ Backend ได้");
 }
 
 export async function fetchCategories(groupId = null) {
   const qs = groupId ? `?group_id=${encodeURIComponent(groupId)}` : "";
-  const res = await fetch(`/api/categories${qs}`);
+  const res = await fetch(apiUrl(`/api/categories${qs}`));
   return handleJsonResponse(res, "ไม่สามารถโหลดหมวดหมู่เอกสารได้");
 }
 
 export async function fetchGroups() {
-  const res = await fetch("/api/admin/groups");
+  const res = await fetch(apiUrl("/api/admin/groups"));
   return handleJsonResponse(res, "ไม่สามารถโหลดกลุ่มประเภทเอกสารได้");
 }
 
@@ -45,7 +61,7 @@ export async function fetchGroups() {
 // ==============================================================================
 
 export async function loginApi(email, password) {
-  const res = await fetch("/api/auth/login", {
+  const res = await fetch(apiUrl("/api/auth/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -54,7 +70,7 @@ export async function loginApi(email, password) {
 }
 
 export async function fetchMeApi(token) {
-  const res = await fetch("/api/auth/me", { headers: authHeaders(token) });
+  const res = await fetch(apiUrl("/api/auth/me"), { headers: authHeaders(token) });
   return handleJsonResponse(res, "Session หมดอายุ");
 }
 
@@ -63,7 +79,7 @@ export async function fetchMeApi(token) {
 // ==============================================================================
 
 export async function createGroupApi(token, payload) {
-  const res = await fetch("/api/admin/groups", {
+  const res = await fetch(apiUrl("/api/admin/groups"), {
     method: "POST",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -72,7 +88,7 @@ export async function createGroupApi(token, payload) {
 }
 
 export async function updateGroupApi(token, groupId, payload) {
-  const res = await fetch(`/api/admin/groups/${groupId}`, {
+  const res = await fetch(apiUrl(`/api/admin/groups/${groupId}`), {
     method: "PATCH",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -81,7 +97,7 @@ export async function updateGroupApi(token, groupId, payload) {
 }
 
 export async function deleteGroupApi(token, groupId) {
-  const res = await fetch(`/api/admin/groups/${groupId}`, {
+  const res = await fetch(apiUrl(`/api/admin/groups/${groupId}`), {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -89,7 +105,7 @@ export async function deleteGroupApi(token, groupId) {
 }
 
 export async function createCategoryApi(token, payload) {
-  const res = await fetch("/api/categories", {
+  const res = await fetch(apiUrl("/api/categories"), {
     method: "POST",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -98,7 +114,7 @@ export async function createCategoryApi(token, payload) {
 }
 
 export async function updateCategoryApi(token, categoryId, payload) {
-  const res = await fetch(`/api/categories/${categoryId}`, {
+  const res = await fetch(apiUrl(`/api/categories/${categoryId}`), {
     method: "PATCH",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -107,7 +123,7 @@ export async function updateCategoryApi(token, categoryId, payload) {
 }
 
 export async function deleteCategoryApi(token, categoryId) {
-  const res = await fetch(`/api/categories/${categoryId}`, {
+  const res = await fetch(apiUrl(`/api/categories/${categoryId}`), {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -121,7 +137,7 @@ export async function deleteCategoryApi(token, categoryId) {
 export async function extractPreviewApi(token, file) {
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch("/api/documents/extract-preview", {
+  const res = await fetch(apiUrl("/api/documents/extract-preview"), {
     method: "POST",
     headers: authHeaders(token),
     body: formData,
@@ -130,7 +146,7 @@ export async function extractPreviewApi(token, file) {
 }
 
 export async function chunkPreviewApi(token, text, maxChars = 1200) {
-  const res = await fetch("/api/documents/chunk-preview", {
+  const res = await fetch(apiUrl("/api/documents/chunk-preview"), {
     method: "POST",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify({ text, max_chars: maxChars }),
@@ -139,7 +155,7 @@ export async function chunkPreviewApi(token, text, maxChars = 1200) {
 }
 
 export async function commitDocumentApi(token, payload) {
-  const res = await fetch("/api/documents/commit", {
+  const res = await fetch(apiUrl("/api/documents/commit"), {
     method: "POST",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -153,12 +169,12 @@ export async function fetchDocumentsApi({ status, categoryId, q } = {}) {
   if (categoryId) params.set("category_id", String(categoryId));
   if (q && q.trim()) params.set("q", q.trim());
   const qs = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetch(`/api/documents${qs}`);
+  const res = await fetch(apiUrl(`/api/documents${qs}`));
   return handleJsonResponse(res, "ไม่สามารถโหลดรายการเอกสารได้");
 }
 
 export async function updateDocumentStatusApi(token, documentId, newStatus) {
-  const res = await fetch(`/api/documents/${documentId}/status`, {
+  const res = await fetch(apiUrl(`/api/documents/${documentId}/status`), {
     method: "PATCH",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify({ status: newStatus }),
@@ -168,14 +184,14 @@ export async function updateDocumentStatusApi(token, documentId, newStatus) {
 
 export async function fetchKnowledgeGapsApi(token, status = null) {
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  const res = await fetch(`/api/admin/knowledge-gaps${qs}`, {
+  const res = await fetch(apiUrl(`/api/admin/knowledge-gaps${qs}`), {
     headers: authHeaders(token),
   });
   return handleJsonResponse(res, "ไม่สามารถโหลดรายการ Knowledge Gaps ได้");
 }
 
 export async function updateKnowledgeGapApi(token, gapId, payload) {
-  const res = await fetch(`/api/admin/knowledge-gaps/${gapId}`, {
+  const res = await fetch(apiUrl(`/api/admin/knowledge-gaps/${gapId}`), {
     method: "PATCH",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -193,14 +209,14 @@ export async function fetchUsersApi(token, { q, role, status } = {}) {
   if (role) params.set("role", role);
   if (status) params.set("status", status);
   const qs = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetch(`/api/admin/users${qs}`, {
+  const res = await fetch(apiUrl(`/api/admin/users${qs}`), {
     headers: authHeaders(token),
   });
   return handleJsonResponse(res, "ไม่สามารถโหลดรายชื่อผู้ใช้งานได้");
 }
 
 export async function createUserApi(token, payload) {
-  const res = await fetch("/api/admin/users", {
+  const res = await fetch(apiUrl("/api/admin/users"), {
     method: "POST",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -209,7 +225,7 @@ export async function createUserApi(token, payload) {
 }
 
 export async function updateUserApi(token, userId, payload) {
-  const res = await fetch(`/api/admin/users/${userId}`, {
+  const res = await fetch(apiUrl(`/api/admin/users/${userId}`), {
     method: "PATCH",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -218,7 +234,7 @@ export async function updateUserApi(token, userId, payload) {
 }
 
 export async function deleteUserApi(token, userId) {
-  const res = await fetch(`/api/admin/users/${userId}`, {
+  const res = await fetch(apiUrl(`/api/admin/users/${userId}`), {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -226,7 +242,7 @@ export async function deleteUserApi(token, userId) {
 }
 
 export async function updateGovernancePolicyApi(token, payload) {
-  const res = await fetch("/api/admin/governance/policy", {
+  const res = await fetch(apiUrl("/api/admin/governance/policy"), {
     method: "PUT",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
@@ -235,7 +251,7 @@ export async function updateGovernancePolicyApi(token, payload) {
 }
 
 export async function transferPrimarySuperApi(token, targetUserId) {
-  const res = await fetch("/api/admin/governance/transfer-primary", {
+  const res = await fetch(apiUrl("/api/admin/governance/transfer-primary"), {
     method: "POST",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify({ target_user_id: targetUserId }),
@@ -257,7 +273,7 @@ export async function streamChatApi({
   onError,
   onDone,
 }) {
-  const res = await fetch("/api/chat/stream", {
+  const res = await fetch(apiUrl("/api/chat/stream"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

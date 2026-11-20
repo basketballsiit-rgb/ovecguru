@@ -15,6 +15,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import {
+  apiUrl,
   chunkPreviewApi,
   commitDocumentApi,
   createCategoryApi,
@@ -732,7 +733,7 @@ export default function AdminDocumentsTab({
                     <div className="flex items-center gap-1.5 shrink-0">
                       {!doc.file_path.startsWith("manual://") && (
                         <a
-                          href={doc.file_url}
+                          href={apiUrl(doc.file_url)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2.5 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100"
