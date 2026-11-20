@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     AI_EMBEDDING_MODEL: str = "gemini-embedding-001"
     AI_EMBEDDING_DIMENSIONS: int = 768
     AI_TIMEOUT_SECONDS: float = 90.0
-    RAG_MIN_RELEVANCE_SCORE: float = 0.42
+    RAG_MIN_RELEVANCE_SCORE: float = 0.58
 
     # Storage paths (strictly under /home/ovec_guru on production server)
     UPLOAD_DIR: str = "/home/ovec_guru/uploads"

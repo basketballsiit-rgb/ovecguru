@@ -11,7 +11,12 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import DocumentCategory
 from app.schemas.chat import ChatStreamRequest
-from app.services.ai_client import AIClientError, is_ai_configured, stream_chat_completion
+from app.services.ai_client import (
+    AIClientError,
+    get_live_ai_config,
+    is_ai_configured,
+    stream_chat_completion,
+)
 from app.services.rag import (
     build_citation_cards,
     build_grounded_messages,
@@ -53,8 +58,20 @@ async def chat_stream(
         top_k=payload.top_k,
     )
 
-    top_score = float(matched_items[0]["score"]) if matched_items else 0.0
-    is_grounded = bool(matched_items) and top_score >= settings.RAG_MIN_RELEVANCE_SCORE
+    live_cfg = get_live_ai_config()
+    min_threshold = max(float(live_cfg.get("rag_min_relevance_score", settings.RAG_MIN_RELEVANCE_SCORE)), 0.55)
+
+    top_item = matched_items[0] if matched_items else None
+    top_score = float(top_item["score"]) if top_item else 0.0
+    top_vec = float(top_item.get("vector_score", 0.0)) if top_item else 0.0
+    top_kw = float(top_item.get("keyword_score", 0.0)) if top_item else 0.0
+
+    # Strict Grounding Gate: require combined score >= threshold AND either strong vector match or keyword overlap
+    is_grounded = (
+        top_item is not None
+        and top_score >= min_threshold
+        and (top_vec >= 0.72 or top_kw >= 0.15)
+    )
 
     if not is_grounded:
         suggested_cat = None
@@ -75,7 +92,7 @@ async def chat_stream(
                 {
                     "grounded": False,
                     "top_score": top_score,
-                    "threshold": settings.RAG_MIN_RELEVANCE_SCORE,
+                    "threshold": min_threshold,
                     "knowledge_gap_logged": True,
                     "knowledge_gap_id": gap.id,
                     "asked_count": gap.asked_count,
@@ -100,7 +117,7 @@ async def chat_stream(
     relevant_items = [
         item
         for item in matched_items
-        if float(item["score"]) >= max(settings.RAG_MIN_RELEVANCE_SCORE * 0.75, 0.25)
+        if float(item["score"]) >= max(min_threshold * 0.85, 0.45)
     ] or matched_items[:1]
 
     citation_cards = build_citation_cards(db, relevant_items)
@@ -112,7 +129,7 @@ async def chat_stream(
             {
                 "grounded": True,
                 "top_score": top_score,
-                "threshold": settings.RAG_MIN_RELEVANCE_SCORE,
+                "threshold": min_threshold,
                 "knowledge_gap_logged": False,
                 "citations": citation_cards,
                 "note": search_note,
