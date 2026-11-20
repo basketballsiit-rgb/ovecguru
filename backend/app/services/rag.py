@@ -55,6 +55,29 @@ THAI_STOPWORDS = {
     "เรื่อง",
 }
 
+THAI_MONTHS_FULL = [
+    "",
+    "มกราคม",
+    "กุมภาพันธ์",
+    "มีนาคม",
+    "เมษายน",
+    "พฤษภาคม",
+    "มิถุนายน",
+    "กรกฎาคม",
+    "สิงหาคม",
+    "กันยายน",
+    "ตุลาคม",
+    "พฤศจิกายน",
+    "ธันวาคม",
+]
+
+
+def _format_thai_date(d: Optional[date]) -> str:
+    if d is None:
+        return "ไม่ระบุวันที่"
+    return f"{d.day} {THAI_MONTHS_FULL[d.month]} {d.year + 543}"
+
+
 STRICT_GROUNDING_SYSTEM_PROMPT = """คุณคือ "OVEC GURU" ผู้ช่วยอัจฉริยะด้านระเบียบ กฎหมาย หลักสูตร และแนวปฏิบัติของสำนักงานคณะกรรมการการอาชีวศึกษา (สอศ.)
 
 กฎเหล็กในการตอบคำถาม (Strict Grounding):
@@ -62,7 +85,8 @@ STRICT_GROUNDING_SYSTEM_PROMPT = """คุณคือ "OVEC GURU" ผู้ช�
 2. ระบุชื่อประกาศ/เอกสาร และหมวด/ข้อที่ใช้อ้างอิงให้ชัดเจนในคำตอบเสมอ
 3. หากเอกสารที่ส่งให้มีหลายฉบับ ให้ยึดถือข้อมูลจากฉบับที่มี "วันที่บังคับใช้ล่าสุด" เป็นหลัก
 4. หากส่วนใดของคำถามไม่มีระบุไว้ในเอกสารอ้างอิง ให้ระบุอย่างตรงไปตรงมาว่าไม่มีข้อมูลส่วนดังกล่าวในเอกสารอ้างอิง
-5. ใช้ภาษาไทยที่เป็นทางการ สุภาพ กระชับ อ่านง่าย และจัดโครงสร้างเป็นข้อ ๆ เมื่อเหมาะสม"""
+5. ใช้ภาษาไทยที่เป็นทางการ สุภาพ กระชับ อ่านง่าย และจัดโครงสร้างเป็นข้อ ๆ เมื่อเหมาะสม
+6. ทุกครั้งที่ระบุวันที่ ให้ใช้รูปแบบ "วันที่ เดือน ปี พ.ศ." ภาษาไทยเสมอ (เช่น 7 ตุลาคม 2569) ห้ามใช้รูปแบบ ค.ศ. YYYY-MM-DD"""
 
 
 def _extract_keywords(question: str) -> List[str]:
@@ -369,7 +393,7 @@ def build_grounded_messages(
     for idx, item in enumerate(matched_items[:max_context_chunks], start=1):
         doc: Document = item["document"]
         chunk: DocumentChunk = item["chunk"]
-        eff = doc.effective_date.isoformat() if doc.effective_date else "ไม่ระบุวันที่"
+        eff = _format_thai_date(doc.effective_date)
         cat_name = doc.category.name if doc.category else "-"
         heading = chunk.clause_heading or "เนื้อหาเอกสาร"
         body = chunk.content_text.strip()
