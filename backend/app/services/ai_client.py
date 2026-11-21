@@ -279,6 +279,74 @@ async def _build_chat_model_chain(primary_model: str) -> List[str]:
     return chain
 
 
+async def expand_search_query(question: str) -> str:
+    """Use Cloud LLM (fast 5s fail-fast) to expand colloquial Thai questions into official OVEC terms.
+
+    Example: "ซื้อของไม่เกินห้าแสนต้องประมูลไหม"
+          -> "จัดซื้อจัดจ้าง วิธีเฉพาะเจาะจง วงเงินไม่เกิน 500000 บาท พัสดุภาครัฐ ระเบียบกระทรวงการคลัง"
+    Returns empty string gracefully on timeout/error so search is never blocked.
+    """
+    if not is_ai_configured() or len(question.strip()) < 4:
+        return ""
+
+    cfg = get_live_ai_config()
+    base_url = str(cfg["api_base_url"])
+    headers = _auth_headers(str(cfg["api_key"]))
+    url = _build_url(base_url, "chat/completions")
+    primary_model = str(cfg["chat_model"])
+
+    now = time.monotonic()
+    model_name = str(
+        _working_model_cache["model"]
+        if (
+            _working_model_cache["model"]
+            and _working_model_cache["primary"] == primary_model
+            and now < float(_working_model_cache["expires_at"])
+        )
+        else primary_model
+    )
+
+    payload: Dict[str, object] = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "คุณคือผู้ช่วยแปลงคำถามภาษาพูดภาษาไทยเป็นคำค้นหาและคำศัพท์ทางการราชการ สอศ. "
+                    "ตอบกลับเป็นคำสำคัญหรือวลีทางการที่เกี่ยวข้องและมีความหมายใกล้เคียงเท่านั้น (คั่นด้วยช่องว่าง ไม่เกิน 12 คำ ห้ามอธิบายเพิ่มเติม)"
+                ),
+            },
+            {"role": "user", "content": question.strip()},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 80,
+        "stream": False,
+    }
+    if "generativelanguage.googleapis.com" in base_url.lower() and "gemini" in model_name.lower():
+        payload["reasoning_effort"] = "low"
+
+    client = _get_http_client()
+    try:
+        resp = await client.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=httpx.Timeout(connect=4.0, read=5.0, write=5.0, pool=4.0),
+        )
+        if resp.status_code >= 400:
+            return ""
+        data = resp.json()
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        expanded = str((choices[0].get("message") or {}).get("content") or "").strip()
+        # Keep it clean single-line
+        expanded = " ".join(expanded.split())
+        return expanded[:240]
+    except Exception:
+        return ""
+
+
 async def stream_chat_completion(
     messages: List[Dict[str, str]],
     temperature: float = 0.1,

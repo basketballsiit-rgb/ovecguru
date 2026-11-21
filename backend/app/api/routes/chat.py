@@ -71,11 +71,14 @@ async def chat_stream(
     if payload.document_id is not None:
         is_grounded = top_item is not None
     else:
-        # Strict Grounding Gate: require combined score >= threshold AND either strong vector match or keyword overlap
+        # Semantic Strict Grounding Gate:
+        # Accept strong semantic similarity (even if colloquial wording differs) OR combined threshold + keyword overlap
         is_grounded = (
             top_item is not None
-            and top_score >= min_threshold
-            and (top_vec >= 0.72 or top_kw >= 0.15)
+            and (
+                (top_score >= min_threshold and (top_vec >= 0.64 or top_kw >= 0.12))
+                or (top_vec >= 0.70 and top_score >= 0.54)
+            )
         )
 
     if not is_grounded:

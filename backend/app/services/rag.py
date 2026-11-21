@@ -21,7 +21,12 @@ from app.models import (
     KnowledgeGap,
     KnowledgeGapStatus,
 )
-from app.services.ai_client import AIClientError, create_embeddings, is_ai_configured
+from app.services.ai_client import (
+    AIClientError,
+    create_embeddings,
+    expand_search_query,
+    is_ai_configured,
+)
 
 THAI_STOPWORDS = {
     "คือ",
@@ -80,11 +85,11 @@ def _format_thai_date(d: Optional[date]) -> str:
 
 STRICT_GROUNDING_SYSTEM_PROMPT = """คุณคือ "OVEC GURU" ผู้ช่วยอัจฉริยะด้านระเบียบ กฎหมาย หลักสูตร และแนวปฏิบัติของสำนักงานคณะกรรมการการอาชีวศึกษา (สอศ.)
 
-กฎเหล็กในการตอบคำถาม (Strict Grounding):
-1. ตอบคำถามโดยอ้างอิงจาก "เอกสารอ้างอิงที่ระบบส่งให้" ด้านล่างนี้เท่านั้น ห้ามแต่งเติม คาดเดา หรือนำข้อมูลจากภายนอกที่ไม่มีในเอกสารมาตอบโดยเด็ดขาด
-2. ระบุชื่อประกาศ/เอกสาร และหมวด/ข้อที่ใช้อ้างอิงให้ชัดเจนในคำตอบเสมอ
-3. หากเอกสารที่ส่งให้มีหลายฉบับ ให้ยึดถือข้อมูลจากฉบับที่มี "วันที่บังคับใช้ล่าสุด" เป็นหลัก
-4. หากส่วนใดของคำถามไม่มีระบุไว้ในเอกสารอ้างอิง ให้ระบุอย่างตรงไปตรงมาว่าไม่มีข้อมูลส่วนดังกล่าวในเอกสารอ้างอิง
+กฎเหล็กในการตอบคำถาม (Semantic Strict Grounding):
+1. ตอบคำถามโดยอ้างอิงจาก "เอกสารอ้างอิงที่ระบบส่งให้" ด้านล่างนี้เท่านั้น ห้ามแต่งเติมตัวเลข วงเงิน หรือกฎเกณฑ์ที่ไม่มีอยู่ในเอกสารโดยเด็ดขาด
+2. ผู้ถามอาจใช้ภาษาพูดหรือคำที่ไม่ตรงกับศัพท์ราชการในเอกสารโดยตรง (เช่น ถามว่า "เรียนออนไลน์" แทน "การศึกษาทางไกล" หรือ "ซื้อของ" แทน "การจัดซื้อจัดจ้าง") ให้คุณตีความเจตนาและเชื่อมโยงคำตอบจากเนื้อหาที่มีความหมายใกล้เคียงในเอกสารอ้างอิงมาอธิบายให้เข้าใจง่าย
+3. หากเอกสารมีเนื้อหาที่ใกล้เคียงหรือเกี่ยวข้องบางส่วนกับคำถาม ให้สรุปหลักเกณฑ์ที่เกี่ยวข้องจากเอกสารพร้อมระบุให้ชัดเจนว่าเอกสารครอบคลุมในประเด็นใดบ้าง และส่วนใดที่เอกสารไม่ได้ระบุไว้
+4. ระบุชื่อประกาศ/เอกสาร และหมวด/ข้อที่ใช้อ้างอิงให้ชัดเจนในคำตอบเสมอ หากเอกสารมีหลายฉบับให้ยึดถือฉบับที่มี "วันที่บังคับใช้ล่าสุด" เป็นหลัก
 5. ใช้ภาษาไทยที่เป็นทางการ สุภาพ กระชับ อ่านง่าย และจัดโครงสร้างเป็นข้อ ๆ เมื่อเหมาะสม
 6. ทุกครั้งที่ระบุวันที่ ให้ใช้รูปแบบ "วันที่ เดือน ปี พ.ศ." ภาษาไทยเสมอ (เช่น 7 ตุลาคม 2569) ห้ามใช้รูปแบบ ค.ศ. YYYY-MM-DD"""
 
@@ -153,13 +158,20 @@ async def hybrid_search_active_chunks(
       - Effective date recency boost
     """
     dialect = db.bind.dialect.name if db.bind is not None else "sqlite"
-    keywords = _extract_keywords(question)
+
+    # AI Semantic Query Expansion: bridge colloquial Thai -> official OVEC terminology
+    expanded_terms = ""
+    if is_ai_configured() and document_id is None:
+        expanded_terms = await expand_search_query(question)
+
+    enriched_query = f"{question} {expanded_terms}".strip() if expanded_terms else question
+    keywords = _extract_keywords(enriched_query)
 
     query_embedding: Optional[List[float]] = None
-    embedding_note: Optional[str] = None
+    embedding_note: Optional[str] = expanded_terms or None
     if is_ai_configured():
         try:
-            vectors = await create_embeddings([question])
+            vectors = await create_embeddings([enriched_query])
             if vectors:
                 query_embedding = vectors[0]
         except AIClientError as exc:
