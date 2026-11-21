@@ -152,6 +152,18 @@ export default function AdminDocumentsTab({
     loadDocuments();
   }, [loadDocuments]);
 
+  // Auto-refresh document list every 15s while any document is still finishing background embeddings
+  useEffect(() => {
+    const hasPendingVectors = documents.some(
+      (d) => d.chunk_count > 0 && (d.embedded_chunk_count ?? 0) < d.chunk_count
+    );
+    if (!hasPendingVectors) return;
+    const timer = setInterval(() => {
+      loadDocuments();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [documents, loadDocuments]);
+
   useEffect(() => {
     loadGaps();
   }, [loadGaps]);

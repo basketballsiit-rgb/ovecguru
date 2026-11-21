@@ -52,6 +52,7 @@ from app.services.ai_client import (
     is_ai_configured,
 )
 from app.services.chunker import chunk_thai_official_text
+from app.services.embed_queue import schedule_background_embedding
 from app.services.ocr import extract_document_text, save_uploaded_file
 
 router = APIRouter(tags=["Documents, OCR Ingestion & Knowledge Gaps"])
@@ -273,13 +274,24 @@ async def commit_document_incremental(
         for c in prepared_chunks
     ]
 
+    # Embed first batch synchronously (~2s) so small/medium docs finish instantly,
+    # and automatically enqueue remaining chunks in the background for large 50+ chunk docs!
     if is_ai_configured():
+        first_batch_limit = 50
         try:
-            vectors, partial_warning = await create_embeddings_resumable(texts_to_embed)
-            embeddings = vectors
-            embedded_count = sum(1 for v in vectors if v is not None)
-            if partial_warning:
-                embedding_warning = partial_warning
+            vectors, partial_warning = await create_embeddings_resumable(
+                texts_to_embed[:first_batch_limit],
+                batch_size=first_batch_limit,
+                throttle_seconds=0.0,
+            )
+            for idx, vec in enumerate(vectors):
+                embeddings[idx] = vec
+            embedded_count = sum(1 for v in embeddings if v is not None)
+            if len(texts_to_embed) > first_batch_limit or partial_warning:
+                embedding_warning = (
+                    f"บันทึกครบ {len(prepared_chunks)} Chunks แล้ว (สร้างเวกเตอร์ชุดแรกแล้ว {embedded_count}/{len(prepared_chunks)} Chunks) "
+                    "ระบบกำลังทยอยสร้างเวกเตอร์ส่วนที่เหลือเบื้องหลังให้อัตโนมัติจนครบ 100% (รอพักโควตาอัตโนมัติเมื่อเจอ 429) คุณสามารถใช้งานส่วนอื่นต่อได้ทันที"
+                )
         except AIClientError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -321,6 +333,10 @@ async def commit_document_incremental(
     db.commit()
     db.refresh(new_doc)
     new_doc.category = category
+
+    # Automatically continue embedding any remaining chunks in the background
+    if is_ai_configured() and embedded_count < len(prepared_chunks):
+        schedule_background_embedding(new_doc.id)
 
     return DocumentCommitResponse(
         document=_to_document_response(
@@ -485,12 +501,16 @@ async def reembed_document_chunks(
     missing_chunks = [c for c in doc.chunks if c.embedding is None]
     target_chunks = missing_chunks if missing_chunks else list(doc.chunks)
 
+    # Process up to 40 chunks immediately, then hand off any remainder to the background queue
+    immediate_chunks = target_chunks[:40]
     texts = [
         f"{doc.title}\n{c.clause_heading or ''}\n{c.content_text}".strip()
-        for c in target_chunks
+        for c in immediate_chunks
     ]
     try:
-        vectors, warning = await create_embeddings_resumable(texts)
+        vectors, warning = await create_embeddings_resumable(
+            texts, batch_size=40, throttle_seconds=0.0
+        )
     except AIClientError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -498,7 +518,7 @@ async def reembed_document_chunks(
         )
 
     newly_embedded = 0
-    for chunk, vec in zip(target_chunks, vectors):
+    for chunk, vec in zip(immediate_chunks, vectors):
         if vec is not None:
             chunk.embedding = vec
             newly_embedded += 1
@@ -506,8 +526,8 @@ async def reembed_document_chunks(
     db.commit()
 
     total_embedded = sum(1 for c in doc.chunks if c.embedding is not None)
-    if warning and newly_embedded == 0:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=warning)
+    if total_embedded < len(doc.chunks):
+        schedule_background_embedding(doc.id)
 
     return _to_document_response(
         doc,
