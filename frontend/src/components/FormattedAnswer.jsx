@@ -134,7 +134,7 @@ export default function FormattedAnswer({ content, streaming = false }) {
     <div className="space-y-2.5 text-base">
       {blocks}
       {streaming && (
-        <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-ovec-maroon animate-pulse rounded-sm" />
+        <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-ovec-maroon opacity-75 rounded-sm" />
       )}
     </div>
   );

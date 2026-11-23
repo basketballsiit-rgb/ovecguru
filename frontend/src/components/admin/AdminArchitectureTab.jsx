@@ -332,21 +332,26 @@ export default function AdminArchitectureTab({ token, user }) {
 
       {/* Cloud AI API Key & Model Configuration (Super Admin Only) */}
       {isSuperAdmin && (
-        <div className="rounded-2xl bg-white border-2 border-amber-300/80 shadow-card overflow-hidden">
-          <div className="ovec-header-gradient px-5 py-3.5 text-white flex flex-wrap items-center justify-between gap-2">
+        <div className="rounded-2xl bg-white border border-stone-200 border-t-[3px] border-t-ovec-gold shadow-card overflow-hidden">
+          <div className="px-5 py-3.5 bg-ovec-paper border-b border-stone-200 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <KeyRound className="w-5 h-5 text-amber-300" />
-              <h3 className="text-sm sm:text-base font-bold">
+              <KeyRound className="w-4 h-4 text-ovec-maroon" strokeWidth={1.75} />
+              <h3 className="text-sm sm:text-base font-semibold text-stone-900">
                 ตั้งค่า Cloud AI API Key (OpenAI-Compatible: Gemini / OpenAI / Typhoon)
               </h3>
             </div>
             <span
-              className={`text-xs font-semibold px-3 py-1 rounded-full border ${
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md border ${
                 apiKeyConfigured
-                  ? "bg-emerald-500/20 border-emerald-300/50 text-emerald-100"
-                  : "bg-amber-400/20 border-amber-300/50 text-amber-100"
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                  : "bg-amber-50 border-amber-200 text-amber-900"
               }`}
             >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  apiKeyConfigured ? "bg-emerald-600" : "bg-amber-500"
+                }`}
+              />
               {apiKeyConfigured
                 ? `พร้อมใช้งาน (${apiKeyMasked})`
                 : "ยังไม่ได้ตั้งค่า AI_API_KEY"}
@@ -514,31 +519,30 @@ export default function AdminArchitectureTab({ token, user }) {
                 key={comp.id}
                 type="button"
                 onClick={() => setSelectedId(comp.id)}
-                className={`text-left rounded-2xl p-4 border transition-all flex flex-col justify-between gap-3 ${
+                className={`text-left rounded-xl p-4 border transition-colors flex flex-col justify-between gap-3 ${
                   active
-                    ? "ovec-header-gradient text-white border-ovec-gold ring-2 ring-amber-300 shadow-md"
-                    : "bg-ovec-cream/60 hover:bg-white border-stone-200 hover:border-ovec-maroon/40 text-stone-800"
+                    ? "bg-ovec-paper border-ovec-maroon border-t-[3px] border-t-ovec-gold ring-1 ring-ovec-maroon/15 text-stone-900"
+                    : "bg-white hover:bg-ovec-paper border-stone-200 hover:border-ovec-maroon/40 text-stone-800"
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <span
-                    className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                      active ? "bg-amber-400/25 text-amber-200" : "bg-rose-100 text-ovec-maroon"
+                    className={`text-[11px] font-semibold px-2 py-0.5 rounded tabular-nums ${
+                      active
+                        ? "bg-ovec-maroon text-white"
+                        : "bg-stone-100 text-stone-600"
                     }`}
                   >
                     ส่วนที่ {comp.step}
                   </span>
                   <Icon
-                    className={`w-5 h-5 ${active ? "text-amber-300" : "text-ovec-maroon"}`}
+                    className={`w-4 h-4 ${active ? "text-ovec-maroon" : "text-stone-400"}`}
+                    strokeWidth={1.75}
                   />
                 </div>
                 <div>
-                  <div className="text-xs sm:text-sm font-bold leading-snug">{comp.title}</div>
-                  <div
-                    className={`text-[11px] mt-1 ${
-                      active ? "text-rose-100" : "text-stone-500"
-                    }`}
-                  >
+                  <div className="text-xs sm:text-sm font-semibold leading-snug">{comp.title}</div>
+                  <div className="text-[11px] mt-1 text-stone-500">
                     {comp.subtitle}
                   </div>
                 </div>
@@ -548,16 +552,17 @@ export default function AdminArchitectureTab({ token, user }) {
         </div>
 
         {/* Selected Component Detail Box */}
-        <div className="rounded-2xl bg-ovec-paper border border-amber-200 p-5 flex flex-col md:flex-row gap-4 items-start">
-          <div className="w-12 h-12 rounded-2xl bg-ovec-maroon text-amber-300 flex items-center justify-center shrink-0">
-            <SelectedIcon className="w-6 h-6" />
+        <div className="rounded-xl bg-ovec-paper border border-stone-200 border-l-[3px] border-l-ovec-gold p-5 flex flex-col md:flex-row gap-4 items-start">
+          <div className="w-10 h-10 rounded-lg bg-ovec-maroon text-amber-300 flex items-center justify-center shrink-0">
+            <SelectedIcon className="w-5 h-5" strokeWidth={1.75} />
           </div>
           <div className="space-y-2 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-bold text-ovec-maroon bg-rose-50 px-2.5 py-0.5 rounded-full">
+              <span className="text-xs font-semibold text-ovec-maroon tabular-nums">
                 ส่วนที่ {selectedComp.step}
               </span>
-              <h4 className="text-base font-bold text-stone-900">{selectedComp.title}</h4>
+              <span className="text-stone-300">·</span>
+              <h4 className="text-base font-semibold text-stone-900">{selectedComp.title}</h4>
             </div>
             <p className="text-xs sm:text-sm text-stone-700 leading-relaxed">
               {selectedComp.summary}
@@ -565,7 +570,7 @@ export default function AdminArchitectureTab({ token, user }) {
             <ul className="pt-1 space-y-1">
               {selectedComp.specs.map((sp, i) => (
                 <li key={i} className="text-xs text-stone-700 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" strokeWidth={1.75} />
                   <span>{sp}</span>
                 </li>
               ))}
@@ -576,7 +581,7 @@ export default function AdminArchitectureTab({ token, user }) {
 
       {/* 6 Best Practice Cards */}
       <div>
-        <h3 className="text-base font-bold text-stone-900 mb-3">
+        <h3 className="text-base font-semibold text-stone-900 mb-3">
           แนวปฏิบัติสำคัญ 6 ข้อของสถาปัตยกรรม OVEC GURU
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -587,10 +592,10 @@ export default function AdminArchitectureTab({ token, user }) {
                 key={idx}
                 className="rounded-2xl bg-white border border-stone-200 p-4 shadow-card space-y-2"
               >
-                <div className="w-9 h-9 rounded-xl bg-rose-50 text-ovec-maroon flex items-center justify-center">
-                  <Icon className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-lg bg-ovec-cream text-ovec-maroon flex items-center justify-center">
+                  <Icon className="w-4 h-4" strokeWidth={1.75} />
                 </div>
-                <h4 className="text-sm font-bold text-stone-900">{bp.title}</h4>
+                <h4 className="text-sm font-semibold text-stone-900">{bp.title}</h4>
                 <p className="text-xs text-stone-600 leading-relaxed">{bp.desc}</p>
               </div>
             );

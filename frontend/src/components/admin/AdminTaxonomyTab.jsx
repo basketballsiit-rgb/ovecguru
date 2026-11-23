@@ -234,8 +234,8 @@ export default function AdminTaxonomyTab({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-stone-900">{grp.name}</span>
-                    <span className="text-[11px] bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full">
-                      {grp.category_count} หมวดหมู่
+                    <span className="text-[11px] text-stone-500 tabular-nums">
+                      ({grp.category_count} หมวดหมู่)
                     </span>
                   </div>
                   {grp.description && (
@@ -252,18 +252,18 @@ export default function AdminTaxonomyTab({
                         setGroupName(grp.name);
                         setGroupDesc(grp.description || "");
                       }}
-                      className="p-1.5 rounded-lg text-stone-600 hover:bg-stone-100 hover:text-ovec-maroon"
+                      className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-ovec-maroon transition-colors"
                       title="แก้ไขกลุ่ม"
                     >
-                      <Pencil className="w-3.5 h-3.5" />
+                      <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDeleteGroup(grp)}
-                      className="p-1.5 rounded-lg text-stone-500 hover:bg-rose-50 hover:text-rose-700"
+                      className="p-1.5 rounded-lg text-stone-500 hover:bg-rose-50 hover:text-rose-700 transition-colors"
                       title="ลบกลุ่ม"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
                     </button>
                   </div>
                 )}
@@ -346,15 +346,15 @@ export default function AdminTaxonomyTab({
             {categories.map((cat) => (
               <div key={cat.id} className="py-2.5 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-stone-900">{cat.name}</span>
                     {cat.is_default && (
-                      <span className="text-[10px] font-semibold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full">
+                      <span className="text-[11px] font-medium bg-amber-50 border border-amber-200 text-amber-900 px-1.5 py-0 rounded">
                         Default
                       </span>
                     )}
-                    <span className="text-[11px] bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full">
-                      {cat.document_count} เอกสาร
+                    <span className="text-[11px] text-stone-500 tabular-nums">
+                      ({cat.document_count} เอกสาร)
                     </span>
                   </div>
                   <div className="text-[11px] text-stone-500 mt-0.5">
@@ -372,18 +372,18 @@ export default function AdminTaxonomyTab({
                         setCatGroupId(String(cat.group_id));
                         setCatIsDefault(Boolean(cat.is_default));
                       }}
-                      className="p-1.5 rounded-lg text-stone-600 hover:bg-stone-100 hover:text-ovec-maroon"
+                      className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-ovec-maroon transition-colors"
                       title="แก้ไข / ย้ายกลุ่ม"
                     >
-                      <Pencil className="w-3.5 h-3.5" />
+                      <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDeleteCategory(cat)}
-                      className="p-1.5 rounded-lg text-stone-500 hover:bg-rose-50 hover:text-rose-700"
+                      className="p-1.5 rounded-lg text-stone-500 hover:bg-rose-50 hover:text-rose-700 transition-colors"
                       title="ลบหมวดหมู่"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
                     </button>
                   </div>
                 )}

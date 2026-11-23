@@ -267,17 +267,17 @@ export default function AdminUsersTab({
       )}
 
       {/* Super Admin Governance Card */}
-      <div className="rounded-2xl bg-white border-2 border-amber-300/80 shadow-card overflow-hidden">
-        <div className="ovec-header-gradient px-5 py-3.5 text-white flex flex-wrap items-center justify-between gap-2">
+      <div className="rounded-2xl bg-white border border-stone-200 border-t-[3px] border-t-ovec-gold shadow-card overflow-hidden">
+        <div className="px-5 py-3.5 bg-ovec-paper border-b border-stone-200 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Crown className="w-5 h-5 text-amber-300" />
-            <h3 className="text-sm sm:text-base font-bold">
+            <Crown className="w-4 h-4 text-ovec-maroon" strokeWidth={1.75} />
+            <h3 className="text-sm sm:text-base font-semibold text-stone-900">
               กำหนดสิทธิ์ของผู้ดูแลระบบสูงสุด (Super Admin Governance)
             </h3>
           </div>
           {primarySuperUser && (
-            <span className="text-xs bg-white/15 border border-amber-300/40 px-3 py-1 rounded-full text-amber-100">
-              Primary Super Admin ปัจจุบัน: <strong>{primarySuperUser.full_name}</strong>
+            <span className="text-xs bg-amber-50 border border-amber-300/80 px-2.5 py-1 rounded-md text-amber-950">
+              Primary Super Admin ปัจจุบัน: <strong className="font-semibold">{primarySuperUser.full_name}</strong>
             </span>
           )}
         </div>
@@ -285,7 +285,7 @@ export default function AdminUsersTab({
         <div className="p-5 grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* 3 Governance Policy Toggles */}
           <form onSubmit={handleSavePolicy} className="lg:col-span-7 space-y-3">
-            <div className="text-xs font-bold text-stone-700 uppercase tracking-wide">
+            <div className="text-xs font-semibold text-stone-700">
               นโยบายการมอบหมายสิทธิ์ให้บทบาทอื่น (บังคับใช้จริงทุก API)
             </div>
 
@@ -556,7 +556,7 @@ export default function AdminUsersTab({
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
-                  <tr className="border-b border-stone-200 text-[11px] uppercase text-stone-500">
+                  <tr className="border-b border-stone-200 text-xs font-medium text-stone-500">
                     <th className="py-2.5 pr-3">ผู้ใช้งาน</th>
                     <th className="py-2.5 px-2">ระดับสิทธิ์</th>
                     <th className="py-2.5 px-2">สถานะ</th>
@@ -565,13 +565,13 @@ export default function AdminUsersTab({
                 </thead>
                 <tbody className="divide-y divide-stone-100">
                   {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-ovec-cream/40">
+                    <tr key={u.id} className="hover:bg-ovec-paper transition-colors">
                       <td className="py-3 pr-3">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-semibold text-stone-900">{u.full_name}</span>
                           {u.is_primary_super && (
-                            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[10px] font-bold text-amber-950">
-                              <Crown className="w-3 h-3 text-amber-700" />
+                            <span className="inline-flex items-center gap-0.5 rounded bg-amber-50 border border-amber-300/80 px-1.5 py-0 text-[11px] font-medium text-amber-900">
+                              <Crown className="w-3 h-3 text-amber-700" strokeWidth={1.75} />
                               Primary
                             </span>
                           )}
@@ -583,7 +583,7 @@ export default function AdminUsersTab({
                       </td>
                       <td className="py-3 px-2">
                         <span
-                          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+                          className={`inline-flex rounded-md border px-2 py-0.5 text-[11px] font-medium ${
                             ROLE_BADGE_MAP[u.role] || "bg-stone-100 text-stone-700"
                           }`}
                         >
@@ -592,12 +592,15 @@ export default function AdminUsersTab({
                       </td>
                       <td className="py-3 px-2">
                         <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                            u.status === "active"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : "bg-rose-50 text-rose-700 border border-rose-200"
+                          className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                            u.status === "active" ? "text-emerald-700" : "text-rose-700"
                           }`}
                         >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              u.status === "active" ? "bg-emerald-600" : "bg-rose-600"
+                            }`}
+                          />
                           {u.status === "active" ? "Active" : "Suspended"}
                         </span>
                       </td>
@@ -613,18 +616,18 @@ export default function AdminUsersTab({
                             setRole(u.role);
                             setStatus(u.status);
                           }}
-                          className="p-1.5 rounded-lg text-stone-600 hover:bg-stone-100 hover:text-ovec-maroon mr-1"
+                          className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-ovec-maroon transition-colors mr-1"
                           title="แก้ไขผู้ใช้งาน"
                         >
-                          <Pencil className="w-3.5 h-3.5" />
+                          <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
                         </button>
                         <button
                           type="button"
                           onClick={() => handleDeleteUser(u)}
-                          className="p-1.5 rounded-lg text-stone-500 hover:bg-rose-50 hover:text-rose-700"
+                          className="p-1.5 rounded-lg text-stone-500 hover:bg-rose-50 hover:text-rose-700 transition-colors"
                           title="ลบผู้ใช้งาน"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
                         </button>
                       </td>
                     </tr>

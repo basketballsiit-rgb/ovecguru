@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Archive,
   CheckCircle2,
+  Database,
   ExternalLink,
   Eye,
   FilePlus2,
@@ -14,7 +15,6 @@ import {
   RefreshCw,
   Save,
   Search,
-  Sparkles,
   Trash2,
   UploadCloud,
   X,
@@ -768,7 +768,7 @@ export default function AdminDocumentsTab({
               <button
                 type="submit"
                 disabled={committing || !extractedText.trim()}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-ovec-maroon hover:bg-ovec-dark disabled:bg-stone-300 text-white py-2.5 px-4 text-sm font-semibold shadow-sm transition"
+                className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-ovec-maroon hover:bg-ovec-dark disabled:bg-stone-300 text-white py-2.5 px-4 text-sm font-semibold transition-colors tabular-nums"
               >
                 {committing ? (
                   <>
@@ -777,7 +777,7 @@ export default function AdminDocumentsTab({
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <Database className="w-4 h-4 text-amber-300" strokeWidth={1.75} />
                     ยืนยันนำเข้าคลัง Vector DB ({chunksPreview.length} Chunks)
                   </>
                 )}
@@ -855,102 +855,110 @@ export default function AdminDocumentsTab({
               </div>
             ) : (
               <div className="divide-y divide-stone-100 max-h-[420px] overflow-y-auto pr-1">
-                {documents.map((doc) => (
-                  <div key={doc.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                            doc.status === "active"
-                              ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                              : "bg-stone-100 text-stone-600 border border-stone-200"
-                          }`}
-                        >
-                          {doc.status === "active" ? "บังคับใช้ล่าสุด" : "ยกเลิกแล้ว"}
-                        </span>
-                        <span className="text-[11px] bg-rose-50 text-ovec-maroon px-2 py-0.5 rounded-full">
-                          {doc.category_name}
-                        </span>
-                        <span
-                          className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                            doc.embedded_chunk_count >= doc.chunk_count && doc.chunk_count > 0
-                              ? "bg-blue-50 text-blue-800 border border-blue-200"
-                              : "bg-amber-50 text-amber-800 border border-amber-200"
-                          }`}
-                          title="จำนวน Chunk ที่สร้างเวกเตอร์แล้ว"
-                        >
-                          {doc.embedded_chunk_count ?? 0}/{doc.chunk_count} Vector
-                        </span>
+                {documents.map((doc) => {
+                  const vectorsReady =
+                    doc.embedded_chunk_count >= doc.chunk_count && doc.chunk_count > 0;
+                  return (
+                    <div
+                      key={doc.id}
+                      className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1 text-[11px] tabular-nums">
+                          <span
+                            className={`inline-flex items-center gap-1.5 font-medium ${
+                              doc.status === "active" ? "text-emerald-700" : "text-stone-500"
+                            }`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                doc.status === "active" ? "bg-emerald-600" : "bg-stone-400"
+                              }`}
+                            />
+                            {doc.status === "active" ? "บังคับใช้ล่าสุด" : "ยกเลิกแล้ว"}
+                          </span>
+                          <span className="text-stone-300">·</span>
+                          <span className="text-stone-600 font-medium">{doc.category_name}</span>
+                          <span className="text-stone-300">·</span>
+                          <span
+                            className={`font-medium ${
+                              vectorsReady ? "text-stone-600" : "text-amber-800"
+                            }`}
+                            title="จำนวน Chunk ที่สร้างเวกเตอร์แล้ว"
+                          >
+                            {doc.embedded_chunk_count ?? 0}/{doc.chunk_count} Vector
+                          </span>
+                        </div>
+                        <div className="text-xs sm:text-sm font-semibold text-stone-900 truncate">
+                          {doc.title}
+                        </div>
+                        <div className="text-[11px] text-stone-500 mt-0.5 tabular-nums">
+                          บังคับใช้: {formatThaiDate(doc.effective_date)} · ประเภท: {doc.ingestion_type}
+                        </div>
                       </div>
-                      <div className="text-xs sm:text-sm font-semibold text-stone-900 truncate">
-                        {doc.title}
-                      </div>
-                      <div className="text-[11px] text-stone-500 mt-0.5">
-                        บังคับใช้: {formatThaiDate(doc.effective_date)} • ประเภท: {doc.ingestion_type}
-                      </div>
-                    </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenViewDoc(doc)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100"
-                        title="ดูเนื้อหา Chunks และสร้างเวกเตอร์ใหม่"
-                      >
-                        <Eye className="w-3.5 h-3.5 text-ovec-maroon" />
-                        <span className="hidden sm:inline">ดู</span>
-                      </button>
-
-                      {canViewGaps && (
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                         <button
                           type="button"
-                          onClick={() => handleOpenEditDoc(doc)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100"
-                          title="แก้ไขชื่อ หมวดหมู่ หรือวันที่บังคับใช้"
+                          onClick={() => handleOpenViewDoc(doc)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-50 transition-colors"
+                          title="ดูเนื้อหา Chunks และสร้างเวกเตอร์ใหม่"
                         >
-                          <Pencil className="w-3.5 h-3.5 text-stone-600" />
-                          <span className="hidden sm:inline">แก้ไข</span>
+                          <Eye className="w-3.5 h-3.5 text-ovec-maroon" strokeWidth={1.75} />
+                          <span className="hidden sm:inline">ดู</span>
                         </button>
-                      )}
 
-                      {!doc.file_path.startsWith("manual://") && (
-                        <a
-                          href={apiUrl(doc.file_url)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100"
-                          title="เปิดไฟล์ต้นฉบับ"
+                        {canViewGaps && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditDoc(doc)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-50 transition-colors"
+                            title="แก้ไขชื่อ หมวดหมู่ หรือวันที่บังคับใช้"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-stone-600" strokeWidth={1.75} />
+                            <span className="hidden sm:inline">แก้ไข</span>
+                          </button>
+                        )}
+
+                        {!doc.file_path.startsWith("manual://") && (
+                          <a
+                            href={apiUrl(doc.file_url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-50 transition-colors"
+                            title="เปิดไฟล์ต้นฉบับ"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.75} />
+                          </a>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={!canArchiveDocs}
+                          onClick={() => handleToggleDocStatus(doc)}
+                          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium border transition-colors disabled:opacity-40 ${
+                            doc.status === "active"
+                              ? "border-amber-200 bg-amber-50/70 text-amber-900 hover:bg-amber-100/70"
+                              : "border-emerald-200 bg-emerald-50/70 text-emerald-800 hover:bg-emerald-100/70"
+                          }`}
                         >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      )}
+                          <Archive className="w-3 h-3" strokeWidth={1.75} />
+                          {doc.status === "active" ? "ยกเลิกใช้" : "เปิดใช้งาน"}
+                        </button>
 
-                      <button
-                        type="button"
-                        disabled={!canArchiveDocs}
-                        onClick={() => handleToggleDocStatus(doc)}
-                        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold border transition disabled:opacity-40 ${
-                          doc.status === "active"
-                            ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-                            : "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                        }`}
-                      >
-                        <Archive className="w-3 h-3" />
-                        {doc.status === "active" ? "ยกเลิกใช้" : "เปิดใช้งาน"}
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={!canArchiveDocs}
-                        onClick={() => handleDeleteDoc(doc)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50/70 hover:bg-rose-100 px-2 py-1 text-[11px] font-semibold text-rose-700 transition disabled:opacity-40"
-                        title="ลบเอกสารถาวร"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <button
+                          type="button"
+                          disabled={!canArchiveDocs}
+                          onClick={() => handleDeleteDoc(doc)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50/60 hover:bg-rose-100/70 px-2 py-1 text-[11px] font-medium text-rose-700 transition-colors disabled:opacity-40"
+                          title="ลบเอกสารถาวร"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1024,25 +1032,25 @@ export default function AdminDocumentsTab({
 
       {/* Modal: Edit Document Metadata */}
       {editingDoc && (
-        <div className="fixed inset-0 z-50 bg-stone-900/50 backdrop-blur-[1px] flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white border border-stone-200 shadow-2xl overflow-hidden">
-            <div className="ovec-header-gradient px-5 py-3.5 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-bold">
-                <Pencil className="w-4 h-4 text-amber-300" />
+        <div className="fixed inset-0 z-50 bg-stone-900/45 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white border border-stone-200 border-t-[3px] border-t-ovec-maroon shadow-xl overflow-hidden">
+            <div className="px-5 py-3.5 bg-white border-b border-stone-200 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-semibold text-stone-900 tabular-nums">
+                <Pencil className="w-4 h-4 text-ovec-maroon" strokeWidth={1.75} />
                 แก้ไขข้อมูลเอกสาร #{editingDoc.id}
               </div>
               <button
                 type="button"
                 onClick={() => setEditingDoc(null)}
-                className="p-1 rounded-lg hover:bg-white/15"
+                className="p-1 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-900 transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" strokeWidth={1.75} />
               </button>
             </div>
 
             <form onSubmit={handleSaveEditDoc} className="p-5 space-y-3.5">
               <div>
-                <label className="block text-xs font-semibold text-stone-700 mb-1">
+                <label className="block text-xs font-medium text-stone-700 mb-1">
                   ชื่อประกาศ / ชื่อเอกสาร *
                 </label>
                 <input
@@ -1050,32 +1058,32 @@ export default function AdminDocumentsTab({
                   required
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full rounded-xl border border-stone-300 px-3.5 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
+                  className="w-full rounded-lg border border-stone-300 px-3.5 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
                     วันที่บังคับใช้
                   </label>
                   <input
                     type="date"
                     value={editEffectiveDate}
                     onChange={(e) => setEditEffectiveDate(e.target.value)}
-                    className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
+                    className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
                     หมวดหมู่เอกสาร *
                   </label>
                   <select
                     required
                     value={editCategoryId}
                     onChange={(e) => setEditCategoryId(e.target.value)}
-                    className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
+                    className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm focus:border-ovec-maroon focus:outline-none"
                   >
                     {groups.map((grp) => (
                       <optgroup key={grp.id} label={grp.name}>
@@ -1100,16 +1108,16 @@ export default function AdminDocumentsTab({
                 <button
                   type="button"
                   onClick={() => setEditingDoc(null)}
-                  className="rounded-xl border border-stone-200 px-4 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-100"
+                  className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-50 transition-colors"
                 >
                   ยกเลิก
                 </button>
                 <button
                   type="submit"
                   disabled={savingEdit}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-ovec-maroon hover:bg-ovec-dark text-white px-4 py-2 text-xs font-semibold shadow-sm transition disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-ovec-maroon hover:bg-ovec-dark text-white px-4 py-2 text-xs font-semibold transition-colors disabled:opacity-60"
                 >
-                  <Save className="w-3.5 h-3.5 text-amber-300" />
+                  <Save className="w-3.5 h-3.5 text-amber-300" strokeWidth={1.75} />
                   {savingEdit ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
                 </button>
               </div>
@@ -1120,25 +1128,27 @@ export default function AdminDocumentsTab({
 
       {/* Modal: View Document Chunks & Re-embed */}
       {viewingDoc && (
-        <div className="fixed inset-0 z-50 bg-stone-900/50 backdrop-blur-[1px] flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl max-h-[85vh] rounded-2xl bg-white border border-stone-200 shadow-2xl flex flex-col overflow-hidden">
-            <div className="ovec-header-gradient px-5 py-3.5 text-white flex items-center justify-between gap-2">
+        <div className="fixed inset-0 z-50 bg-stone-900/45 flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl max-h-[85vh] rounded-2xl bg-white border border-stone-200 border-t-[3px] border-t-ovec-gold shadow-xl flex flex-col overflow-hidden">
+            <div className="px-5 py-3.5 bg-white border-b border-stone-200 flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-sm font-bold truncate">{viewingDoc.title}</div>
-                <div className="text-[11px] text-rose-100">
-                  {viewingDoc.category_name} • บังคับใช้ {formatThaiDate(viewingDoc.effective_date)} • เวกเตอร์ {viewingDoc.embedded_chunk_count ?? 0}/{viewingDoc.chunk_count} Chunks
+                <div className="text-sm font-semibold text-stone-900 truncate">
+                  {viewingDoc.title}
+                </div>
+                <div className="text-[11px] text-stone-500 tabular-nums mt-0.5">
+                  {viewingDoc.category_name} · บังคับใช้ {formatThaiDate(viewingDoc.effective_date)} · เวกเตอร์ {viewingDoc.embedded_chunk_count ?? 0}/{viewingDoc.chunk_count} Chunks
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setViewingDoc(null)}
-                className="p-1.5 rounded-lg hover:bg-white/15 shrink-0"
+                className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-900 transition-colors shrink-0"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" strokeWidth={1.75} />
               </button>
             </div>
 
-            <div className="px-5 py-3 bg-ovec-cream border-b border-stone-200 flex flex-wrap items-center justify-between gap-2">
+            <div className="px-5 py-3 bg-ovec-paper border-b border-stone-200 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs text-stone-600">
                 แสดงเนื้อหาทั้งหมดที่ถูกหั่นเก็บไว้ในฐานข้อมูล Vector DB
               </span>
@@ -1147,12 +1157,12 @@ export default function AdminDocumentsTab({
                   type="button"
                   disabled={reembeddingId === viewingDoc.id}
                   onClick={() => handleReembedDoc(viewingDoc)}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-ovec-maroon hover:bg-ovec-dark text-white px-3.5 py-1.5 text-xs font-semibold shadow-sm transition disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-ovec-maroon hover:bg-ovec-dark text-white px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-60"
                 >
                   {reembeddingId === viewingDoc.id ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
-                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                    <RefreshCw className="w-3.5 h-3.5 text-amber-300" strokeWidth={1.75} />
                   )}
                   สร้างเวกเตอร์ใหม่ (Re-embed)
                 </button>
@@ -1166,10 +1176,10 @@ export default function AdminDocumentsTab({
                 (viewingDoc.chunks || []).map((ch) => (
                   <div
                     key={ch.id}
-                    className="rounded-xl border border-stone-200 bg-stone-50/70 p-3.5 text-sm"
+                    className="rounded-xl border border-stone-200 bg-stone-50/60 p-3.5 text-sm"
                   >
-                    <div className="text-xs font-bold text-ovec-maroon mb-1">
-                      #{ch.chunk_index + 1} • {ch.clause_heading || "เนื้อหาเอกสาร"}
+                    <div className="text-xs font-semibold text-ovec-maroon mb-1 tabular-nums">
+                      #{ch.chunk_index + 1} · {ch.clause_heading || "เนื้อหาเอกสาร"}
                     </div>
                     <p className="whitespace-pre-wrap text-stone-800 leading-relaxed">
                       {ch.content_text}
